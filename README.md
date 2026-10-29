@@ -4,9 +4,10 @@ Client de terminal desktop personnel (SSH, puis Telnet et série) pour administr
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
 Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
 
-**État : phase 4 (Telnet et sessions multiples).** SSH et Telnet, une session par
-onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
-`known_hosts`, mode compatibilité pour équipements anciens.
+**État : phase 5 (fonctions d'administration réseau).** SSH et Telnet, une session
+par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
+`known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
+automatique, barre de commandes, envoi multi-sessions, gestion du pager.
 
 ## Prérequis (Ubuntu)
 
@@ -34,6 +35,24 @@ Raccourcis : `Ctrl+Shift+C` copier la sélection, `Ctrl+Shift+V` coller,
 `Ctrl+Tab` / `Ctrl+Shift+Tab` (ou `Ctrl+PageDown` / `Ctrl+PageUp`) changer d'onglet,
 clic molette sur un onglet pour le fermer.
 
+## Administration réseau
+
+- **Keepalive** (par profil, 30 s par défaut, 0 = désactivé) : keepalive SSH ou
+  `IAC NOP` Telnet, plus le keepalive TCP du noyau. Garde les sessions inactives
+  ouvertes à travers pare-feu et NAT, et détecte une connexion coupée.
+- **Reconnexion** : un clic dans le bandeau après une déconnexion. Option par profil :
+  reconnexion automatique (2, 5, 10, 20 puis 30 s, 5 tentatives) **uniquement** si la
+  connexion est perdue, jamais après un `exit`.
+- **Barre de commandes** : boutons enregistrés envoyant une ou plusieurs lignes, avec
+  un délai entre les lignes. Clic droit sur un bouton pour le modifier.
+- **Diffuser…** : envoie les mêmes commandes à plusieurs sessions connectées, après
+  une étape de vérification explicite.
+- **Collage** : au-delà d'une ligne, une confirmation avec aperçu est demandée.
+- **Pager** (par profil) : réponse automatique à `--More--`, `---- More ----`,
+  `-- More --`, `<--- More --->`, `---(more)---` ; ou commandes envoyées à la
+  première invite (préréglages `terminal length 0` / `screen-length 0 temporary`).
+  Ces commandes sont stockées en clair : jamais de mot de passe dedans.
+
 ## Telnet
 
 Pour les consoles de laboratoire (GNS3, EVE-NG, PNETLab) et les équipements sans SSH.
@@ -59,11 +78,15 @@ Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) :
 - `~/.ssh/known_hosts` est lu (jamais modifié) : un serveur déjà connu d'OpenSSH est
   reconnu. En cas de conflit, le fichier de NetForge prévaut.
 - Migrations SQL versionnées : `src-tauri/migrations/` (version dans `PRAGMA user_version`).
+  Avant de migrer une base existante, NetForge en fait une copie
+  `netforge.db.backup-v<N>` (état avant la migration depuis la version N).
+- Pour essayer l'application sans toucher à ses vraies données :
+  `XDG_DATA_HOME=/tmp/netforge-essai npm run tauri dev`.
 
 ## Vérifications
 
 ```bash
-npm run typecheck && npm run lint                       # frontend
+npm run typecheck && npm run lint && npm test          # frontend (Vitest)
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings
 cargo test                                              # tests unitaires
 ```
@@ -95,14 +118,16 @@ une minute.
 ```
 src/                      Frontend React + TypeScript
   features/terminal/      xterm.js, contrôle de flux de la sortie, file d'entrée
-  features/sessions/      onglets (reducer), panneau d'une session
+  features/sessions/      onglets (reducer, reconnexion auto), panneau d'une session
+  features/commands/      barre de commandes, diffusion multi-sessions
   features/connections/   connexion rapide, arborescence et éditeur de profils
-  components/             barre d'onglets, barre d'état, dialogues
+  components/             barre d'onglets et de titre, barre d'état, dialogues
   services/               appels Tauri typés
   types/                  types partagés avec le backend
 src-tauri/src/
   commands/               commandes Tauri (validation, couche fine)
-  sessions/               gestionnaire de sessions et boucle par session
+  sessions/               gestionnaire de sessions, boucle par session,
+                          automatismes (pager, invite, séquences)
   transport/              trait commun, ssh/ (russh, algorithmes modernes/legacy),
                           telnet/ (négociation RFC 854/1073/1091), net.rs (TCP)
   persistence/            SQLite : migrations, profils, dossiers
