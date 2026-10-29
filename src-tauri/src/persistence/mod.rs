@@ -12,7 +12,10 @@ use crate::errors::AppError;
 /// Versioned migrations, applied in order. The index + 1 is stored in SQLite's
 /// `user_version`, so each one runs exactly once. Never edit a published
 /// migration: add a new file instead.
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/0001_initial.sql"),
+    include_str!("../../migrations/0002_telnet_profiles.sql"),
+];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between
 /// threads (`Send` but not `Sync`), hence the `Mutex`. `Arc` lets every command
@@ -109,5 +112,52 @@ mod tests {
         assert_eq!(version as usize, MIGRATIONS.len());
         // Running again is a no-op.
         migrate(&mut conn).unwrap();
+    }
+
+    /// A database created by the previous version keeps its data when upgraded.
+    #[test]
+    fn upgrade_from_version_1_keeps_profiles() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(MIGRATIONS[0]).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute_batch(
+            "INSERT INTO folders (id, name) VALUES (1, 'Lab');
+             INSERT INTO profiles (folder_id, name, host, port, username, auth_method, secret_ref)
+             VALUES (1, 'R1', '10.0.0.1', 22, 'admin', 'password', 'profile-1');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+
+        let row: (String, String, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT name, protocol, secret_ref, folder_id FROM profiles",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            ("R1".into(), "ssh".into(), Some("profile-1".into()), Some(1))
+        );
+        // The new constraint accepts Telnet profiles without authentication.
+        conn.execute(
+            "INSERT INTO profiles (name, protocol, host, port, username, auth_method)
+             VALUES ('console', 'telnet', '127.0.0.1', 5000, '', 'none')",
+            [],
+        )
+        .unwrap();
+        // ...and the foreign key to folders still works after the rebuild.
+        conn.execute("DELETE FROM folders WHERE id = 1", [])
+            .unwrap();
+        let folder: Option<i64> = conn
+            .query_row(
+                "SELECT folder_id FROM profiles WHERE name = 'R1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(folder, None);
     }
 }

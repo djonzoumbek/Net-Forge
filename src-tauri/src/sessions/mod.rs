@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::errors::AppError;
 use crate::security::known_hosts::{HostKeyMismatch, KnownHosts};
 use crate::transport::ssh::{self, HostKeyInfo, HostKeyPrompt, SshParams};
+use crate::transport::telnet::{self, TelnetParams};
 use crate::transport::{ConnectionInfo, TermSize, Transport};
 
 pub type SessionId = u64;
@@ -101,6 +102,16 @@ impl SessionManager {
         self.spawn_session(sinks, size, move |ask| {
             ssh::connect(params, size, known_hosts, ask)
         })
+    }
+
+    pub fn open_telnet(
+        &self,
+        params: TelnetParams,
+        size: TermSize,
+        sinks: SessionSinks,
+    ) -> SessionId {
+        // Telnet has no host key: the prompt callback is simply never used.
+        self.spawn_session(sinks, size, move |_ask| telnet::connect(params, size))
     }
 
     /// Generic over the connection step so that tests can use a fake transport.
@@ -254,6 +265,9 @@ impl SessionManager {
         self.sessions().len()
     }
 }
+
+#[cfg(test)]
+mod integration_tests;
 
 #[cfg(test)]
 mod tests {

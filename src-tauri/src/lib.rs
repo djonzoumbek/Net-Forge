@@ -55,6 +55,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::sessions::session_open_ssh,
             commands::sessions::session_open_profile,
+            commands::sessions::session_open_telnet,
             commands::sessions::session_write,
             commands::sessions::session_resize,
             commands::sessions::session_ack,

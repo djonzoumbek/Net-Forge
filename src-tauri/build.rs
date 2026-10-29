@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "session_close",
     "session_answer_host_key",
     "session_open_profile",
+    "session_open_telnet",
     "library_list",
     "profile_create",
     "profile_update",

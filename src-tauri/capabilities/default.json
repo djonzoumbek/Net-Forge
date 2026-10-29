@@ -9,6 +9,7 @@
     "core:default",
     "allow-session-open-ssh",
     "allow-session-open-profile",
+    "allow-session-open-telnet",
     "allow-session-write",
     "allow-session-resize",
     "allow-session-ack",

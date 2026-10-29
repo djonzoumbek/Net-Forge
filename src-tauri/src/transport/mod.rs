@@ -4,7 +4,9 @@
 //! the protocol. Connecting is transport-specific (each one has its own parameters)
 //! and therefore stays outside the trait.
 
+pub mod net;
 pub mod ssh;
+pub mod telnet;
 
 use std::future::Future;
 

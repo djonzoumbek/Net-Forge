@@ -9,7 +9,33 @@ use crate::security::secrets::{Secrets, profile_account};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum Protocol {
+    Ssh,
+    Telnet,
+}
+
+impl Protocol {
+    fn as_str(self) -> &'static str {
+        match self {
+            Protocol::Ssh => "ssh",
+            Protocol::Telnet => "telnet",
+        }
+    }
+
+    fn parse(s: &str) -> Result<Self, AppError> {
+        match s {
+            "ssh" => Ok(Protocol::Ssh),
+            "telnet" => Ok(Protocol::Telnet),
+            other => Err(AppError::Storage(format!("protocole inconnu : {other}"))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum AuthMethod {
+    /// Telnet: the device asks for credentials itself, in the terminal.
+    None,
     Password,
     KeyFile,
     Agent,
@@ -18,6 +44,7 @@ pub enum AuthMethod {
 impl AuthMethod {
     fn as_str(self) -> &'static str {
         match self {
+            AuthMethod::None => "none",
             AuthMethod::Password => "password",
             AuthMethod::KeyFile => "keyFile",
             AuthMethod::Agent => "agent",
@@ -26,6 +53,7 @@ impl AuthMethod {
 
     fn parse(s: &str) -> Result<Self, AppError> {
         match s {
+            "none" => Ok(AuthMethod::None),
             "password" => Ok(AuthMethod::Password),
             "keyFile" => Ok(AuthMethod::KeyFile),
             "agent" => Ok(AuthMethod::Agent),
@@ -51,6 +79,7 @@ pub struct Profile {
     pub id: i64,
     pub folder_id: Option<i64>,
     pub name: String,
+    pub protocol: Protocol,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -81,6 +110,7 @@ pub enum SecretChange {
 pub struct ProfileInput {
     pub folder_id: Option<i64>,
     pub name: String,
+    pub protocol: Protocol,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -110,10 +140,23 @@ impl ProfileInput {
         if self.port == 0 {
             return invalid("le port doit être entre 1 et 65535.");
         }
-        if self.username.is_empty() || self.username.len() > 255 {
-            return invalid("nom d'utilisateur invalide.");
+        if self.username.len() > 255 {
+            return invalid("nom d'utilisateur trop long.");
+        }
+        if self.protocol == Protocol::Telnet {
+            // No SSH authentication, secret or algorithms: the device asks for its
+            // credentials in the terminal.
+            self.auth_method = AuthMethod::None;
+            self.key_path = None;
+            self.legacy_mode = false;
+            self.secret = SecretChange::Clear;
+            return Ok(self);
+        }
+        if self.username.is_empty() {
+            return invalid("le nom d'utilisateur est obligatoire en SSH.");
         }
         match self.auth_method {
+            AuthMethod::None => return invalid("choisis une méthode d'authentification SSH."),
             AuthMethod::KeyFile if self.key_path.is_none() => {
                 return invalid("chemin de la clé privée manquant.");
             }
@@ -134,8 +177,16 @@ impl ProfileInput {
     }
 }
 
-const PROFILE_COLUMNS: &str =
-    "id, folder_id, name, host, port, username, auth_method, key_path, secret_ref, legacy_mode";
+const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
+     key_path, secret_ref, legacy_mode, protocol";
+
+/// Text columns parsed after the row is read (rusqlite closures cannot return
+/// `AppError`).
+struct RawRow {
+    stored: StoredProfile,
+    auth_method: String,
+    protocol: String,
+}
 
 /// Profile plus the internal keyring reference.
 struct StoredProfile {
@@ -143,34 +194,36 @@ struct StoredProfile {
     secret_ref: Option<String>,
 }
 
-fn read_profile(row: &Row) -> rusqlite::Result<(StoredProfile, String)> {
+fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
     let secret_ref: Option<String> = row.get(8)?;
-    let auth_method: String = row.get(6)?;
     let profile = Profile {
         id: row.get(0)?,
         folder_id: row.get(1)?,
         name: row.get(2)?,
+        // Placeholders, replaced in `finish`.
+        protocol: Protocol::Ssh,
         host: row.get(3)?,
         port: row.get(4)?,
         username: row.get(5)?,
-        // Placeholder, parsed by the caller (rusqlite closures cannot return AppError).
-        auth_method: AuthMethod::Password,
+        auth_method: AuthMethod::None,
         key_path: row.get(7)?,
         has_saved_secret: secret_ref.is_some(),
         legacy_mode: row.get(9)?,
     };
-    Ok((
-        StoredProfile {
+    Ok(RawRow {
+        stored: StoredProfile {
             profile,
             secret_ref,
         },
-        auth_method,
-    ))
+        auth_method: row.get(6)?,
+        protocol: row.get(10)?,
+    })
 }
 
-fn finish(row: (StoredProfile, String)) -> Result<StoredProfile, AppError> {
-    let (mut stored, auth_method) = row;
-    stored.profile.auth_method = AuthMethod::parse(&auth_method)?;
+fn finish(row: RawRow) -> Result<StoredProfile, AppError> {
+    let mut stored = row.stored;
+    stored.profile.auth_method = AuthMethod::parse(&row.auth_method)?;
+    stored.profile.protocol = Protocol::parse(&row.protocol)?;
     Ok(stored)
 }
 
@@ -261,8 +314,8 @@ pub fn create(
     // that a keyring failure rolls the new profile back.
     let tx = conn.transaction().map_err(db_error)?;
     tx.execute(
-        "INSERT INTO profiles (folder_id, name, host, port, username, auth_method, key_path, legacy_mode)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO profiles (folder_id, name, host, port, username, auth_method, key_path, legacy_mode, protocol)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             input.folder_id,
             input.name,
@@ -271,7 +324,8 @@ pub fn create(
             input.username,
             input.auth_method.as_str(),
             input.key_path,
-            input.legacy_mode
+            input.legacy_mode,
+            input.protocol.as_str()
         ],
     )
     .map_err(db_error)?;
@@ -301,8 +355,9 @@ pub fn update(
     let tx = conn.transaction().map_err(db_error)?;
     tx.execute(
         "UPDATE profiles SET folder_id = ?1, name = ?2, host = ?3, port = ?4, username = ?5,
-             auth_method = ?6, key_path = ?7, legacy_mode = ?8, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?9",
+             auth_method = ?6, key_path = ?7, legacy_mode = ?8, protocol = ?9,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?10",
         params![
             input.folder_id,
             input.name,
@@ -312,6 +367,7 @@ pub fn update(
             input.auth_method.as_str(),
             input.key_path,
             input.legacy_mode,
+            input.protocol.as_str(),
             id
         ],
     )
@@ -350,7 +406,11 @@ pub fn save_secret(
     value: &str,
 ) -> Result<(), AppError> {
     let current = get_stored(conn, id)?;
-    if current.profile.auth_method == AuthMethod::Agent || value.is_empty() {
+    if matches!(
+        current.profile.auth_method,
+        AuthMethod::Agent | AuthMethod::None
+    ) || value.is_empty()
+    {
         return Err(AppError::InvalidInput(
             "rien à enregistrer pour ce profil.".into(),
         ));
@@ -435,6 +495,7 @@ mod tests {
         ProfileInput {
             folder_id: None,
             name: name.into(),
+            protocol: Protocol::Ssh,
             host: "10.0.0.1".into(),
             port: 22,
             username: "admin".into(),
@@ -518,6 +579,33 @@ mod tests {
             assert!(library.folders.is_empty(), "sub-folders are deleted too");
             assert_eq!(library.profiles[0].id, p.id);
             assert_eq!(library.profiles[0].folder_id, None, "profile moved to root");
+            Ok(())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn telnet_profile_has_no_authentication_nor_secret() {
+        with_db(|conn, secrets| {
+            let mut console = input("R1 console", SecretChange::Set { value: "pw".into() });
+            console.protocol = Protocol::Telnet;
+            console.port = 5000;
+            console.username = String::new();
+            console.legacy_mode = true;
+            let p = create(conn, secrets, console)?;
+            assert_eq!(p.protocol, Protocol::Telnet);
+            assert_eq!(p.auth_method, AuthMethod::None);
+            assert!(!p.has_saved_secret, "no secret is ever stored for Telnet");
+            assert!(!p.legacy_mode, "SSH algorithms do not apply to Telnet");
+            assert!(secrets.get(&profile_account(p.id))?.is_none());
+
+            // An SSH profile still needs a user name and a method.
+            let mut ssh = input("R1 ssh", SecretChange::Keep);
+            ssh.username = String::new();
+            assert!(create(conn, secrets, ssh).is_err());
+            let mut ssh = input("R1 ssh", SecretChange::Keep);
+            ssh.auth_method = AuthMethod::None;
+            assert!(create(conn, secrets, ssh).is_err());
             Ok(())
         })
         .await;

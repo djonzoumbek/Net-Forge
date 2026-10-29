@@ -10,12 +10,13 @@ use zeroize::Zeroizing;
 
 use crate::errors::AppError;
 use crate::persistence::Database;
-use crate::persistence::profiles::{self, AuthMethod};
+use crate::persistence::profiles::{self, AuthMethod, Protocol};
 use crate::security::known_hosts::KnownHosts;
 use crate::security::secrets::Secrets;
 use crate::sessions::{SessionCommand, SessionEvent, SessionId, SessionManager, SessionSinks};
 use crate::transport::TermSize;
 use crate::transport::ssh::{SshAuth, SshParams};
+use crate::transport::telnet::TelnetParams;
 
 /// Upper bound for one `session_write` call (a large paste).
 const MAX_WRITE: usize = 1024 * 1024;
@@ -131,6 +132,51 @@ pub fn session_open_ssh(
     Ok(manager.open_ssh(params, size, known_hosts, sinks(on_data, on_event)))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelnetConnectRequest {
+    host: String,
+    port: u16,
+}
+
+impl TelnetConnectRequest {
+    fn into_params(self) -> Result<TelnetParams, AppError> {
+        let host = validate_host(&self.host)?;
+        if self.port == 0 {
+            return Err(AppError::InvalidInput(
+                "le port doit être entre 1 et 65535.".into(),
+            ));
+        }
+        Ok(TelnetParams {
+            host,
+            port: self.port,
+        })
+    }
+}
+
+fn validate_host(host: &str) -> Result<String, AppError> {
+    let host = host.trim();
+    if host.is_empty() || host.len() > 255 || host.chars().any(char::is_whitespace) {
+        return Err(AppError::InvalidInput("nom d'hôte invalide.".into()));
+    }
+    Ok(host.to_string())
+}
+
+/// Quick Telnet connection (lab consoles). Unencrypted: the UI warns about it.
+#[tauri::command]
+pub fn session_open_telnet(
+    manager: State<'_, SessionManager>,
+    request: TelnetConnectRequest,
+    size: TermSize,
+    on_data: Channel<InvokeResponseBody>,
+    on_event: Channel<SessionEvent>,
+) -> Result<SessionId, AppError> {
+    let params = request.into_params()?;
+    let size = size.validate()?;
+    tracing::info!(host = %params.host, port = params.port, "opening Telnet session");
+    Ok(manager.open_telnet(params, size, sinks(on_data, on_event)))
+}
+
 /// Connects with a saved profile. `secret` is the password / passphrase typed by
 /// the user when none is saved (or to override the saved one).
 #[allow(clippy::too_many_arguments)] // Tauri injects states and channels as arguments.
@@ -153,8 +199,21 @@ pub async fn session_open_profile(
     let (profile, saved) = db
         .run(move |conn| profiles::get_with_secret(conn, &secrets, profile_id))
         .await?;
+    if profile.protocol == Protocol::Telnet {
+        let params = TelnetParams {
+            host: profile.host,
+            port: profile.port,
+        };
+        tracing::info!(profile = profile_id, host = %params.host, port = params.port, "opening Telnet session");
+        return Ok(manager.open_telnet(params, size, sinks(on_data, on_event)));
+    }
     let secret = typed.or(saved);
     let auth = match profile.auth_method {
+        AuthMethod::None => {
+            return Err(AppError::InvalidInput(
+                "profil SSH sans méthode d'authentification.".into(),
+            ));
+        }
         AuthMethod::Password => SshAuth::Password(secret.ok_or(AppError::PasswordRequired)?),
         AuthMethod::KeyFile => SshAuth::KeyFile {
             path: expand_home(profile.key_path.as_deref().unwrap_or_default()),

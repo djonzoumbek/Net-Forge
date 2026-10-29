@@ -12,18 +12,15 @@ use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::AgentClient;
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
-use tokio::net::TcpStream;
 use tokio::sync::{oneshot, watch};
 use tokio::time::{Instant, sleep, timeout};
 use zeroize::Zeroizing;
 
 use self::algorithms::Negotiated;
-use super::{ConnectionInfo, TermSize, Transport, TransportEvent};
+use super::{ConnectionInfo, TermSize, Transport, TransportEvent, net};
 use crate::errors::AppError;
 use crate::security::known_hosts::{HostKeyMismatch, HostKeyStatus, KnownHosts};
 
-const DNS_TIMEOUT: Duration = Duration::from_secs(10);
-const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Key exchange must complete within this delay (time spent by the user on the
 /// host key prompt is not counted).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -220,7 +217,7 @@ pub async fn connect(
     known_hosts: Arc<KnownHosts>,
     ask_host_key: HostKeyPrompt,
 ) -> Result<SshTransport, AppError> {
-    let tcp = open_tcp(&params.host, params.port).await?;
+    let tcp = net::open_tcp(&params.host, params.port).await?;
 
     let config = Arc::new(client::Config {
         keepalive_interval: Some(KEEPALIVE_INTERVAL),
@@ -324,46 +321,6 @@ fn handshake_error(
         },
         other => other,
     }
-}
-
-async fn open_tcp(host: &str, port: u16) -> Result<TcpStream, AppError> {
-    // Resolving first lets us tell "unknown host name" apart from "host unreachable".
-    let addrs: Vec<_> = timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
-        .await
-        .map_err(|_| AppError::Timeout(format!("la résolution DNS de « {host} » ne répond pas.")))?
-        .map_err(|_| AppError::HostNotFound(host.to_string()))?
-        .collect();
-    if addrs.is_empty() {
-        return Err(AppError::HostNotFound(host.to_string()));
-    }
-
-    let tcp = timeout(TCP_TIMEOUT, TcpStream::connect(&addrs[..]))
-        .await
-        .map_err(|_| {
-            AppError::Timeout(format!(
-                "aucune réponse de {host}:{port} après {} s (hôte éteint ou pare-feu ?).",
-                TCP_TIMEOUT.as_secs()
-            ))
-        })?
-        .map_err(|e| {
-            use std::io::ErrorKind as K;
-            AppError::Unreachable(match e.kind() {
-                K::ConnectionRefused => {
-                    format!(
-                        "connexion refusée par {host}:{port} (aucun serveur SSH sur ce port ?)."
-                    )
-                }
-                K::NetworkUnreachable | K::HostUnreachable => {
-                    format!("{host} n'est pas joignable (réseau ou route absente).")
-                }
-                _ => format!("{host}:{port} : {e}"),
-            })
-        })?;
-    // Interactive traffic: send keystrokes immediately instead of batching them.
-    if let Err(e) = tcp.set_nodelay(true) {
-        tracing::debug!("set_nodelay failed: {e}");
-    }
-    Ok(tcp)
 }
 
 async fn authenticate(
