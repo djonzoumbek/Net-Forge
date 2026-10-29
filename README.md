@@ -4,9 +4,9 @@ Client de terminal desktop personnel (SSH, puis Telnet et série) pour administr
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
 Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
 
-**État : phase 3 (profils, persistance, sécurité).** Profils rangés en dossiers,
-mots de passe dans le trousseau système, `known_hosts`, mode compatibilité pour
-équipements anciens. Une session à la fois (onglets : phase 4).
+**État : phase 4 (Telnet et sessions multiples).** SSH et Telnet, une session par
+onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
+`known_hosts`, mode compatibilité pour équipements anciens.
 
 ## Prérequis (Ubuntu)
 
@@ -30,7 +30,20 @@ Logs techniques : sortie standard, niveau réglable avec `RUST_LOG`
 (ex. `RUST_LOG=netforge_lib=debug npm run tauri dev`). Ils ne contiennent ni
 mots de passe ni contenu des sessions.
 
-Raccourcis du terminal : `Ctrl+Shift+C` copier la sélection, `Ctrl+Shift+V` coller.
+Raccourcis : `Ctrl+Shift+C` copier la sélection, `Ctrl+Shift+V` coller,
+`Ctrl+Tab` / `Ctrl+Shift+Tab` (ou `Ctrl+PageDown` / `Ctrl+PageUp`) changer d'onglet,
+clic molette sur un onglet pour le fermer.
+
+## Telnet
+
+Pour les consoles de laboratoire (GNS3, EVE-NG, PNETLab) et les équipements sans SSH.
+**Tout circule en clair**, mots de passe compris : un badge « clair » / « Non chiffré »
+le rappelle sur chaque session Telnet. Aucun mot de passe n'est enregistré pour un
+profil Telnet (l'équipement le demande dans le terminal).
+
+Négociation prise en charge : ECHO, SUPPRESS-GO-AHEAD, NAWS (taille de fenêtre,
+transmise quand l'équipement l'accepte) et TERMINAL-TYPE (`XTERM-256COLOR`).
+La touche Entrée envoie `CR NUL`, comme le client `telnet` standard (RFC 854).
 
 ## Données
 
@@ -55,11 +68,12 @@ cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings
 cargo test                                              # tests unitaires
 ```
 
-### Tests d'intégration SSH (Docker)
+### Tests d'intégration SSH et Telnet (Docker)
 
-Des serveurs OpenSSH jetables (Alpine, avec vim/htop/less/ping) écoutent sur
-`127.0.0.1` uniquement : port **2222** (moderne) et port **2223** (algorithmes legacy
-seulement, comme un vieux Cisco IOS / Huawei VRP).
+Des serveurs jetables (Alpine, avec vim/htop/less/ping) écoutent sur `127.0.0.1`
+uniquement : SSH port **2222** (moderne), SSH port **2223** (algorithmes legacy
+seulement, comme un vieux Cisco IOS / Huawei VRP) et Telnet port **2323**
+(busybox telnetd, avec invite `login:`).
 
 ```bash
 ./scripts/ssh-test-server.sh start        # utilisateur netforge / mot de passe netforge-test
@@ -81,14 +95,16 @@ une minute.
 ```
 src/                      Frontend React + TypeScript
   features/terminal/      xterm.js, contrôle de flux de la sortie, file d'entrée
+  features/sessions/      onglets (reducer), panneau d'une session
   features/connections/   connexion rapide, arborescence et éditeur de profils
-  components/             barre d'état, dialogues (clé d'hôte, secret, confirmation)
+  components/             barre d'onglets, barre d'état, dialogues
   services/               appels Tauri typés
   types/                  types partagés avec le backend
 src-tauri/src/
   commands/               commandes Tauri (validation, couche fine)
   sessions/               gestionnaire de sessions et boucle par session
-  transport/              trait commun + ssh/ (russh, algorithmes modernes/legacy)
+  transport/              trait commun, ssh/ (russh, algorithmes modernes/legacy),
+                          telnet/ (négociation RFC 854/1073/1091), net.rs (TCP)
   persistence/            SQLite : migrations, profils, dossiers
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }

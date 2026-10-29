@@ -6,10 +6,13 @@
 #                                           or a man-in-the-middle)
 # Credentials: user "netforge", password "netforge-test".
 # Port 2222: modern OpenSSH. Port 2223: legacy-only algorithms (old Cisco/Huawei).
+# Port 2323: Telnet (busybox telnetd + login), like a lab console.
 set -euo pipefail
 
 NAME=netforge-sshd
 LEGACY_NAME=netforge-sshd-legacy
+TELNET_NAME=netforge-telnetd
+TELNET_PORT="${NETFORGE_TELNET_TEST_PORT:-2323}"
 PORT="${NETFORGE_SSH_TEST_PORT:-2222}"
 LEGACY_PORT="${NETFORGE_SSH_LEGACY_PORT:-2223}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,18 +27,21 @@ case "${1:-start}" in
     cat "$KEYS/id_plain.pub" "$KEYS/id_pass.pub" > "$KEYS/authorized_keys"
     chmod 600 "$KEYS/authorized_keys"
     docker build -q -t netforge-sshd "$ROOT/scripts/ssh-test-server" >/dev/null
-    docker rm -f "$NAME" "$LEGACY_NAME" >/dev/null 2>&1 || true
+    docker rm -f "$NAME" "$LEGACY_NAME" "$TELNET_NAME" >/dev/null 2>&1 || true
     docker run -d --name "$NAME" -p "127.0.0.1:$PORT:22" \
       -v "$KEYS/authorized_keys:/home/netforge/.ssh/authorized_keys:ro" \
       netforge-sshd >/dev/null
     docker run -d --name "$LEGACY_NAME" -p "127.0.0.1:$LEGACY_PORT:22" \
       netforge-sshd /usr/sbin/sshd -D -e -f /etc/ssh/sshd_legacy_config >/dev/null
+    docker run -d --name "$TELNET_NAME" -p "127.0.0.1:$TELNET_PORT:23" \
+      netforge-sshd /usr/sbin/telnetd -F -p 23 -l /bin/login >/dev/null
     echo "SSH test server on 127.0.0.1:$PORT (user netforge / netforge-test)"
     echo "Legacy-only SSH server on 127.0.0.1:$LEGACY_PORT (same credentials)"
+    echo "Telnet server on 127.0.0.1:$TELNET_PORT (same credentials)"
     echo "Keys: $KEYS/id_plain (no passphrase), $KEYS/id_pass (passphrase: test-passphrase)"
     ;;
   stop)
-    docker rm -f "$NAME" "$LEGACY_NAME" >/dev/null && echo "stopped"
+    docker rm -f "$NAME" "$LEGACY_NAME" "$TELNET_NAME" >/dev/null && echo "stopped"
     ;;
   rotate-keys)
     # New host keys, then SIGHUP: sshd re-executes itself and loads them.
