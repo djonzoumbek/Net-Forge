@@ -4,12 +4,79 @@ Client de terminal desktop personnel (SSH, puis Telnet et série) pour administr
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
 Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
 
-**État : phase 7 (SFTP et port série).** SSH, Telnet et console série, une session
+**État : phase 8 (packaging) — paquet `.deb` et AppImage pour Ubuntu.** SSH, Telnet et console série, une session
 par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
 session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
 de fichiers SFTP.
+
+## Installation (paquet .deb)
+
+```bash
+sudo apt install ./NetForge_0.1.0_amd64.deb
+```
+
+`apt` (et non `dpkg -i`) installe aussi les dépendances (WebKitGTK, GTK 3, libudev,
+libdbus). NetForge apparaît ensuite dans le menu des applications (catégorie
+Réseau), ou se lance avec la commande `netforge`.
+
+Fichiers installés : `/usr/bin/netforge`, `/usr/share/applications/NetForge.desktop`
+et les icônes dans `/usr/share/icons/hicolor/*/apps/netforge.png`. Aucun service,
+aucun fichier hors de ces chemins.
+
+Mise à jour : réinstaller un `.deb` plus récent de la même façon. Les profils sont
+conservés ; une base d'une version précédente est migrée automatiquement, après une
+copie de sauvegarde (voir [Données](#données)).
+
+### Désinstallation
+
+```bash
+sudo apt remove net-forge        # retire le programme
+```
+
+Comme pour toute application, tes données personnelles restent en place (elles sont
+dans ton dossier personnel, pas dans le paquet). Pour tout effacer :
+
+```bash
+rm -rf ~/.local/share/dev.kamis.netforge     # profils, known_hosts, cache
+rm -rf ~/Documents/NetForge/logs             # journaux de session (si utilisés)
+```
+
+et supprimer les entrées « NetForge » dans l'application « Mots de passe et clés »
+(trousseau GNOME).
+
+### AppImage (sans installation)
+
+Un seul fichier exécutable, utile pour essayer NetForge sans droits administrateur :
+
+```bash
+chmod +x NetForge_0.1.0_amd64.AppImage
+./NetForge_0.1.0_amd64.AppImage
+```
+
+Il nécessite FUSE 2 (`sudo apt install libfuse2t64` s'il manque) ; sinon :
+`./NetForge_0.1.0_amd64.AppImage --appimage-extract-and-run`. Il embarque WebKitGTK
+(~87 Mo, contre ~6 Mo pour le `.deb`) et utilise les mêmes données que le `.deb`.
+Pas d'entrée dans le menu des applications. Le `.deb` reste le format recommandé.
+
+## Compiler depuis les sources
+
+Prérequis ci-dessous, puis :
+
+```bash
+npm install
+npm run tauri build -- --bundles deb
+# -> src-tauri/target/release/bundle/deb/NetForge_0.1.0_amd64.deb
+npm run tauri build -- --bundles appimage
+# -> src-tauri/target/release/bundle/appimage/NetForge_0.1.0_amd64.AppImage
+```
+
+La première construction de l'AppImage télécharge les outils `linuxdeploy` (~35 Mo,
+gardés dans `~/.cache/tauri`).
+
+La compilation release (optimisation complète, LTO) prend 5 à 10 minutes sur un
+portable. Le binaire seul est dans `src-tauri/target/release/netforge`.
 
 ## Prérequis (Ubuntu)
 
@@ -229,6 +296,9 @@ src-tauri/src/
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
 src-tauri/migrations/     migrations SQL versionnées
+src-tauri/linux/          modèle du fichier .desktop (menu des applications)
+src-tauri/icons/          icônes générées (npx tauri icon assets/netforge-icon.svg)
+assets/netforge-icon.svg  icône source
 scripts/                  serveur SSH de test
 ```
 
