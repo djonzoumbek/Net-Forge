@@ -47,6 +47,9 @@ pub struct KnownHosts {
     /// Keys that failed with a mismatch, waiting for an explicit replacement.
     /// Kept here so the UI never has to send key material back to us.
     pending: Mutex<HashMap<String, PublicKey>>,
+    /// Serializes read-modify-write of the own file: with several tabs, two
+    /// unknown hosts may be accepted at the same time.
+    write_lock: Mutex<()>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -67,6 +70,7 @@ impl KnownHosts {
             own_file,
             user_file,
             pending: Mutex::new(HashMap::new()),
+            write_lock: Mutex::new(()),
         }
     }
 
@@ -121,6 +125,14 @@ impl KnownHosts {
 
     /// Records a key the user just accepted for an unknown host.
     pub fn add(&self, host: &str, port: u16, key: &PublicKey) -> Result<(), AppError> {
+        let _guard = self.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let target = host_pattern(host, port);
+        let already_known = read_entries(&self.own_file, &target)?
+            .iter()
+            .any(|e| e.marker.is_none() && e.key.key_data() == key.key_data());
+        if already_known {
+            return Ok(());
+        }
         let mut content = read_to_string_or_empty(&self.own_file)?;
         if !content.is_empty() && !content.ends_with('\n') {
             content.push('\n');
@@ -154,6 +166,7 @@ impl KnownHosts {
             AppError::InvalidInput("aucune clé en attente de remplacement pour cet hôte.".into())
         })?;
 
+        let _guard = self.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         let content = read_to_string_or_empty(&self.own_file)?;
         let mut kept = String::new();
         for (index, line) in content.lines().enumerate() {
@@ -467,6 +480,32 @@ mod tests {
         assert!(!hosts_match("*.lab,!bad.lab", "bad.lab"));
         assert!(hosts_match("10.0.0.?", "10.0.0.7"));
         assert!(!hosts_match("10.0.0.?", "10.0.0.17"));
+    }
+
+    #[test]
+    fn concurrent_adds_lose_nothing_and_never_duplicate() {
+        let (kh, _dir) = store("", None);
+        let kh = std::sync::Arc::new(kh);
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let kh = kh.clone();
+                std::thread::spawn(move || {
+                    kh.add(&format!("r{i}"), 22, &key(ED_A)).unwrap();
+                    kh.add(&format!("r{i}"), 22, &key(ED_A)).unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let content = fs::read_to_string(kh.own_file()).unwrap();
+        assert_eq!(content.lines().count(), 8, "{content}");
+        for i in 0..8 {
+            assert!(matches!(
+                kh.check(&format!("r{i}"), 22, &key(ED_A)).unwrap(),
+                HostKeyStatus::Trusted
+            ));
+        }
     }
 
     #[test]

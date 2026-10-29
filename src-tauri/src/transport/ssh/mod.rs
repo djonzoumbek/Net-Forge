@@ -313,6 +313,15 @@ fn handshake_error(
             None => AppError::HostKeyRejected,
         };
     }
+    if let russh::Error::HUP | russh::Error::Disconnect = error {
+        // Closed before authentication: on network devices this is usually a
+        // connection limit or an access list, not a network problem.
+        return AppError::Unreachable(
+            "le serveur a fermé la connexion pendant la négociation SSH (trop de connexions \
+             simultanées, lignes VTY toutes occupées, ou accès refusé par une ACL ?)."
+                .into(),
+        );
+    }
     match AppError::from(error) {
         AppError::NoCommonAlgorithm { kind, server, .. } => AppError::NoCommonAlgorithm {
             kind,
