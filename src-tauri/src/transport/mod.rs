@@ -32,6 +32,17 @@ impl TermSize {
     }
 }
 
+/// Security properties of an open connection, shown in the session's tab.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInfo {
+    pub protocol: &'static str,
+    /// `false` for Telnet: everything, passwords included, travels in clear text.
+    pub encrypted: bool,
+    /// SSH only: negotiated algorithms and which of them are legacy.
+    pub algorithms: Option<ssh::algorithms::Negotiated>,
+}
+
 /// Something that happened on the remote side.
 #[derive(Debug)]
 pub enum TransportEvent {
@@ -46,6 +57,8 @@ pub enum TransportEvent {
 /// tokio's multi-threaded runtime, so the futures must be `Send` (movable between
 /// threads). Implementations can still be written with plain `async fn`.
 pub trait Transport: Send + 'static {
+    fn info(&self) -> ConnectionInfo;
+
     /// Waits for the next remote event.
     ///
     /// Must be cancel-safe: the runner calls it inside `tokio::select!`, which drops

@@ -1,20 +1,26 @@
 //! SSH transport built on `russh` (pure Rust, async, tokio-based).
 
+pub mod algorithms;
+
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use russh::client::{self, DisconnectReason};
-use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::agent::client::AgentClient;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use tokio::net::TcpStream;
 use tokio::sync::{oneshot, watch};
 use tokio::time::{Instant, sleep, timeout};
 use zeroize::Zeroizing;
 
-use super::{TermSize, Transport, TransportEvent};
+use self::algorithms::Negotiated;
+use super::{ConnectionInfo, TermSize, Transport, TransportEvent};
 use crate::errors::AppError;
+use crate::security::known_hosts::{HostKeyMismatch, HostKeyStatus, KnownHosts};
 
 const DNS_TIMEOUT: Duration = Duration::from_secs(10);
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,6 +39,11 @@ pub enum SshAuth {
         path: PathBuf,
         passphrase: Option<Zeroizing<String>>,
     },
+    /// Keys held by an SSH agent. `None`: the agent of the session, found through
+    /// `SSH_AUTH_SOCK` (the normal case); `Some`: an explicit socket (tests).
+    Agent {
+        socket: Option<PathBuf>,
+    },
 }
 
 // Manual Debug so that secrets can never end up in logs by accident.
@@ -41,6 +52,7 @@ impl fmt::Debug for SshAuth {
         match self {
             SshAuth::Password(_) => f.write_str("Password(<redacted>)"),
             SshAuth::KeyFile { path, .. } => write!(f, "KeyFile({})", path.display()),
+            SshAuth::Agent { .. } => f.write_str("Agent"),
         }
     }
 }
@@ -51,9 +63,11 @@ pub struct SshParams {
     pub port: u16,
     pub username: String,
     pub auth: SshAuth,
+    /// "Compatibility mode for old devices": also offer legacy algorithms.
+    pub legacy: bool,
 }
 
-/// What the user needs to see to decide whether to trust a server.
+/// What the user needs to see to decide whether to trust an unknown server.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HostKeyInfo {
     pub host: String,
@@ -71,11 +85,44 @@ pub type HostKeyPrompt = Box<dyn Fn(HostKeyInfo) -> oneshot::Receiver<bool> + Se
 struct ClientHandler {
     host: String,
     port: u16,
+    known_hosts: Arc<KnownHosts>,
     ask_host_key: HostKeyPrompt,
     /// `true` while waiting for the user, so the handshake timeout can be paused.
     prompting: watch::Sender<bool>,
     /// Why russh ended the connection, read later to explain the closure.
     disconnect_reason: Arc<Mutex<Option<String>>>,
+    /// Why the host key was refused, read by `connect` to build the error.
+    refusal: Arc<Mutex<Option<HostKeyRefusal>>>,
+    negotiated: Arc<Mutex<Negotiated>>,
+}
+
+enum HostKeyRefusal {
+    Changed(HostKeyMismatch),
+    Revoked,
+    Certificate,
+    StorageError(String),
+}
+
+impl ClientHandler {
+    fn refuse(&self, reason: HostKeyRefusal) -> Result<bool, russh::Error> {
+        if let Ok(mut slot) = self.refusal.lock() {
+            *slot = Some(reason);
+        }
+        Ok(false)
+    }
+
+    async fn ask_user(&mut self, key: &PublicKey) -> bool {
+        let info = HostKeyInfo {
+            host: self.host.clone(),
+            port: self.port,
+            algorithm: key.algorithm().as_str().to_string(),
+            fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+        };
+        self.prompting.send_replace(true);
+        let accepted = (self.ask_host_key)(info).await.unwrap_or(false);
+        self.prompting.send_replace(false);
+        accepted
+    }
 }
 
 impl client::Handler for ClientHandler {
@@ -86,24 +133,52 @@ impl client::Handler for ClientHandler {
         server_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         let key = match server_key {
-            PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            PublicKeyOrCertificate::PublicKey { key, .. } => key.clone(),
             PublicKeyOrCertificate::Certificate(_) => {
-                tracing::warn!("host certificates are not supported yet, rejecting");
-                return Ok(false);
+                return self.refuse(HostKeyRefusal::Certificate);
             }
         };
-        let info = HostKeyInfo {
-            host: self.host.clone(),
-            port: self.port,
-            algorithm: key.algorithm().as_str().to_string(),
-            fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-        };
-        // Phase 2: the key is shown and confirmed at every connection.
-        // Persistence in a known_hosts file comes in phase 3.
-        self.prompting.send_replace(true);
-        let accepted = (self.ask_host_key)(info).await.unwrap_or(false);
-        self.prompting.send_replace(false);
-        Ok(accepted)
+        // known_hosts files are read/written on the blocking pool (disk I/O).
+        let (kh, host, port, k) = (
+            self.known_hosts.clone(),
+            self.host.clone(),
+            self.port,
+            key.clone(),
+        );
+        let status = tokio::task::spawn_blocking(move || kh.check(&host, port, &k)).await;
+        match status {
+            Ok(Ok(HostKeyStatus::Trusted)) => Ok(true),
+            Ok(Ok(HostKeyStatus::Unknown)) => {
+                if !self.ask_user(&key).await {
+                    return Ok(false);
+                }
+                let (kh, host, port) = (self.known_hosts.clone(), self.host.clone(), self.port);
+                let saved = tokio::task::spawn_blocking(move || kh.add(&host, port, &key)).await;
+                if !matches!(saved, Ok(Ok(()))) {
+                    // Accepted for this session even if it could not be remembered.
+                    tracing::warn!("accepted host key could not be saved");
+                }
+                Ok(true)
+            }
+            Ok(Ok(HostKeyStatus::Changed(mismatch))) => {
+                self.refuse(HostKeyRefusal::Changed(mismatch))
+            }
+            Ok(Ok(HostKeyStatus::Revoked)) => self.refuse(HostKeyRefusal::Revoked),
+            Ok(Err(e)) => self.refuse(HostKeyRefusal::StorageError(e.to_string())),
+            Err(e) => self.refuse(HostKeyRefusal::StorageError(e.to_string())),
+        }
+    }
+
+    async fn kex_done(
+        &mut self,
+        _shared_secret: Option<&[u8]>,
+        names: &russh::Names,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if let Ok(mut slot) = self.negotiated.lock() {
+            *slot = Negotiated::from_names(names);
+        }
+        Ok(())
     }
 
     async fn disconnected(
@@ -134,6 +209,7 @@ pub struct SshTransport {
     channel: russh::Channel<client::Msg>,
     exit_status: Option<u32>,
     disconnect_reason: Arc<Mutex<Option<String>>>,
+    negotiated: Arc<Mutex<Negotiated>>,
 }
 
 /// Opens the connection, checks the host key, authenticates and starts an
@@ -141,6 +217,7 @@ pub struct SshTransport {
 pub async fn connect(
     params: SshParams,
     size: TermSize,
+    known_hosts: Arc<KnownHosts>,
     ask_host_key: HostKeyPrompt,
 ) -> Result<SshTransport, AppError> {
     let tcp = open_tcp(&params.host, params.port).await?;
@@ -148,18 +225,22 @@ pub async fn connect(
     let config = Arc::new(client::Config {
         keepalive_interval: Some(KEEPALIVE_INTERVAL),
         keepalive_max: KEEPALIVE_MAX,
-        // `Preferred::DEFAULT` only contains modern algorithms. Legacy ones will be
-        // enabled per profile by the compatibility mode (phase 3).
+        preferred: algorithms::preferred(params.legacy),
         ..Default::default()
     });
     let (prompting_tx, mut prompting_rx) = watch::channel(false);
     let disconnect_reason = Arc::new(Mutex::new(None));
+    let refusal = Arc::new(Mutex::new(None));
+    let negotiated = Arc::new(Mutex::new(Negotiated::default()));
     let handler = ClientHandler {
         host: params.host.clone(),
         port: params.port,
+        known_hosts,
         ask_host_key,
         prompting: prompting_tx,
         disconnect_reason: disconnect_reason.clone(),
+        refusal: refusal.clone(),
+        negotiated: negotiated.clone(),
     };
 
     // Handshake with a timeout that is paused while the host key prompt is open:
@@ -170,7 +251,9 @@ pub async fn connect(
     tokio::pin!(deadline);
     let mut handle = loop {
         tokio::select! {
-            result = &mut handshake => break result?,
+            result = &mut handshake => {
+                break result.map_err(|e| handshake_error(e, &refusal, params.legacy))?;
+            }
             Ok(()) = prompting_rx.changed() => {
                 if !*prompting_rx.borrow() {
                     deadline.as_mut().reset(Instant::now() + HANDSHAKE_TIMEOUT);
@@ -208,7 +291,39 @@ pub async fn connect(
         channel,
         exit_status: None,
         disconnect_reason,
+        negotiated,
     })
+}
+
+/// Turns a failed handshake into the most useful error for the user.
+fn handshake_error(
+    error: russh::Error,
+    refusal: &Mutex<Option<HostKeyRefusal>>,
+    legacy_enabled: bool,
+) -> AppError {
+    if let russh::Error::UnknownKey = error {
+        let reason = refusal.lock().ok().and_then(|mut r| r.take());
+        return match reason {
+            Some(HostKeyRefusal::Changed(mismatch)) => AppError::HostKeyChanged(Box::new(mismatch)),
+            Some(HostKeyRefusal::Revoked) => AppError::HostKeyRevoked,
+            Some(HostKeyRefusal::Certificate) => AppError::Ssh(
+                "le serveur présente un certificat d'hôte, non pris en charge pour l'instant."
+                    .into(),
+            ),
+            Some(HostKeyRefusal::StorageError(e)) => {
+                AppError::Storage(format!("vérification de la clé d'hôte impossible : {e}"))
+            }
+            None => AppError::HostKeyRejected,
+        };
+    }
+    match AppError::from(error) {
+        AppError::NoCommonAlgorithm { kind, server, .. } => AppError::NoCommonAlgorithm {
+            kind,
+            server,
+            legacy_enabled,
+        },
+        other => other,
+    }
 }
 
 async fn open_tcp(host: &str, port: u16) -> Result<TcpStream, AppError> {
@@ -274,8 +389,14 @@ async fn authenticate(
             let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash);
             handle.authenticate_publickey(params.username, key).await?
         }
+        SshAuth::Agent { socket } => {
+            authenticate_with_agent(handle, params.username, socket).await?
+        }
     };
+    auth_result(result)
+}
 
+fn auth_result(result: client::AuthResult) -> Result<(), AppError> {
     match result {
         client::AuthResult::Success => Ok(()),
         client::AuthResult::Failure {
@@ -289,6 +410,60 @@ async fn authenticate(
             }))
         }
     }
+}
+
+/// Tries each key of the SSH agent in turn. The private keys never leave the
+/// agent: it only signs the authentication challenge for us.
+async fn authenticate_with_agent(
+    handle: &mut client::Handle<ClientHandler>,
+    username: String,
+    socket: Option<PathBuf>,
+) -> Result<client::AuthResult, AppError> {
+    let connected = match socket {
+        Some(path) => AgentClient::connect_uds(path).await,
+        None => AgentClient::connect_env().await,
+    };
+    let mut agent = connected.map_err(|e| {
+        AppError::Agent(match e {
+            russh::keys::Error::EnvVar(_) => {
+                "aucun agent SSH détecté (variable SSH_AUTH_SOCK absente).".into()
+            }
+            other => format!("connexion à l'agent SSH impossible : {other}"),
+        })
+    })?;
+    let identities = agent
+        .request_identities()
+        .await
+        .map_err(|e| AppError::Agent(format!("lecture des clés de l'agent : {e}")))?;
+    let keys: Vec<PublicKey> = identities
+        .into_iter()
+        .filter_map(|identity| match identity {
+            AgentIdentity::PublicKey { key, .. } => Some(key),
+            AgentIdentity::Certificate { .. } => None,
+        })
+        .collect();
+    if keys.is_empty() {
+        return Err(AppError::Agent(
+            "l'agent SSH ne contient aucune clé (ajoute-en une avec ssh-add).".into(),
+        ));
+    }
+    let hash = match handle.best_supported_rsa_hash().await? {
+        Some(hash) => hash,
+        None => Some(HashAlg::Sha256),
+    };
+    let mut last = None;
+    for key in keys {
+        let result = handle
+            .authenticate_publickey_with(username.clone(), key, hash, &mut agent)
+            .await
+            .map_err(|e| AppError::Agent(format!("signature par l'agent : {e}")))?;
+        if let client::AuthResult::Success = result {
+            return Ok(result);
+        }
+        last = Some(result);
+    }
+    // `keys` is not empty, so `last` is always set here.
+    last.ok_or_else(|| AppError::Agent("aucune clé de l'agent n'a été essayée.".into()))
 }
 
 async fn load_private_key(
@@ -306,9 +481,7 @@ async fn load_private_key(
     .map_err(|e| {
         use russh::keys::Error as K;
         AppError::PrivateKey(match e {
-            K::KeyIsEncrypted => {
-                format!("{display} est protégée par une passphrase : renseigne-la.")
-            }
+            K::KeyIsEncrypted => return AppError::PassphraseRequired(display),
             K::IO(io) if io.kind() == std::io::ErrorKind::NotFound => {
                 format!("fichier {display} introuvable.")
             }
@@ -321,6 +494,19 @@ async fn load_private_key(
 }
 
 impl Transport for SshTransport {
+    fn info(&self) -> ConnectionInfo {
+        let negotiated = self
+            .negotiated
+            .lock()
+            .map(|n| n.clone())
+            .unwrap_or_default();
+        ConnectionInfo {
+            protocol: "ssh",
+            encrypted: true,
+            algorithms: Some(negotiated),
+        }
+    }
+
     async fn recv(&mut self) -> TransportEvent {
         // `Channel::wait` reads from an mpsc channel, which is cancel-safe.
         loop {

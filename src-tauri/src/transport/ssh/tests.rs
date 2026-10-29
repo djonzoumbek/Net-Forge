@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
 use super::*;
+use crate::security::known_hosts::KnownHosts;
 
 const USER: &str = "netforge";
 const PASSWORD: &str = "netforge-test";
@@ -28,13 +29,47 @@ fn key_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn legacy_port() -> u16 {
+    std::env::var("NETFORGE_SSH_LEGACY_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(2223)
+}
+
 fn params(auth: SshAuth) -> SshParams {
     SshParams {
         host: "127.0.0.1".into(),
         port: port(),
         username: USER.into(),
         auth,
+        legacy: false,
     }
+}
+
+fn temp_dir(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "netforge-ssh-{tag}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Empty known_hosts (and no ~/.ssh/known_hosts): every test sees the prompt.
+fn fresh_known_hosts() -> Arc<KnownHosts> {
+    Arc::new(KnownHosts::new(temp_dir("kh").join("known_hosts"), None))
+}
+
+/// Shadows `super::connect` for the tests written before known_hosts existed.
+async fn connect(
+    params: SshParams,
+    size: TermSize,
+    ask: HostKeyPrompt,
+) -> Result<SshTransport, AppError> {
+    super::connect(params, size, fresh_known_hosts(), ask).await
 }
 
 fn password(p: &str) -> SshAuth {
@@ -155,7 +190,7 @@ async fn key_login_with_and_without_passphrase() {
     .await
     .err()
     .expect("encrypted key without passphrase must fail");
-    assert_eq!(missing.code(), "private_key");
+    assert_eq!(missing.code(), "passphrase_required");
     assert!(missing.to_string().contains("passphrase"), "{missing}");
 }
 
@@ -327,4 +362,178 @@ async fn network_cut_is_detected_by_keepalive() {
     let reason = result.expect("network cut not detected in time");
     eprintln!("detected after {:?}: {reason}", start.elapsed());
     assert!(reason.contains("Connexion perdue"), "{reason}");
+}
+
+/// Phase 3: the key is asked once, then remembered; a different key is blocked
+/// until it is explicitly replaced.
+#[tokio::test]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn known_hosts_remember_block_and_replace() {
+    let kh = fresh_known_hosts();
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let t = super::connect(
+        params(password(PASSWORD)),
+        SIZE,
+        kh.clone(),
+        accepting_prompt(prompts.clone()),
+    )
+    .await
+    .unwrap();
+    t.close().await;
+    assert_eq!(prompts.lock().unwrap().len(), 1, "first connection asks");
+    let server_fp = prompts.lock().unwrap()[0].fingerprint.clone();
+
+    // Known now: a prompt would refuse, so success proves it was not asked.
+    let t = super::connect(
+        params(password(PASSWORD)),
+        SIZE,
+        kh.clone(),
+        rejecting_prompt(),
+    )
+    .await
+    .expect("known host must not prompt");
+    t.close().await;
+
+    // Simulate a server whose key changed: record another key for this host.
+    let fake = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMpKXV8Haj77LheIxsYi7Za1NIVsqMEvsOUGtoliTK5c";
+    std::fs::write(kh.own_file(), format!("[127.0.0.1]:{} {fake}\n", port())).unwrap();
+    let err = super::connect(
+        params(password(PASSWORD)),
+        SIZE,
+        kh.clone(),
+        accepting_prompt(Arc::default()),
+    )
+    .await
+    .err()
+    .expect("changed key must block");
+    let AppError::HostKeyChanged(mismatch) = err else {
+        panic!("expected HostKeyChanged, got {err:?}");
+    };
+    assert_eq!(mismatch.new_fingerprint, server_fp);
+    assert_ne!(mismatch.old_fingerprint, server_fp);
+
+    kh.replace("127.0.0.1", port(), &mismatch.new_fingerprint)
+        .unwrap();
+    let t = super::connect(params(password(PASSWORD)), SIZE, kh, rejecting_prompt())
+        .await
+        .expect("replaced key is trusted");
+    t.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs ./scripts/ssh-test-server.sh start (legacy server on 2223)"]
+async fn legacy_server_needs_compatibility_mode() {
+    let mut p = params(password(PASSWORD));
+    p.port = legacy_port();
+    let err = connect(p, SIZE, accepting_prompt(Arc::default()))
+        .await
+        .err()
+        .expect("modern-only must fail");
+    assert_eq!(err.code(), "no_common_algorithm");
+    let message = err.to_string();
+    assert!(
+        message.contains("diffie-hellman-group1-sha1"),
+        "server offer shown: {message}"
+    );
+    assert!(
+        message.contains("mode compatibilité"),
+        "suggestion shown: {message}"
+    );
+
+    let mut p = params(password(PASSWORD));
+    p.port = legacy_port();
+    p.legacy = true;
+    let mut t = connect(p, SIZE, accepting_prompt(Arc::default()))
+        .await
+        .expect("compatibility mode must connect");
+    let algorithms = t.info().algorithms.unwrap();
+    eprintln!("negotiated: {algorithms:?}");
+    assert!(algorithms.legacy.contains(&"ssh-rsa".to_string()));
+    assert!(algorithms.legacy.iter().any(|a| a.contains("-cbc")));
+    assert!(algorithms.legacy.contains(&"hmac-sha1".to_string()));
+    assert!(run(&mut t, "whoami", 60).await.contains(USER));
+    t.close().await;
+}
+
+#[tokio::test]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn modern_server_negotiates_no_legacy_algorithm() {
+    let mut p = params(password(PASSWORD));
+    p.legacy = true; // even with the mode enabled, modern wins on a modern server
+    let t = connect(p, SIZE, accepting_prompt(Arc::default()))
+        .await
+        .unwrap();
+    let algorithms = t.info().algorithms.unwrap();
+    assert!(algorithms.legacy.is_empty(), "{algorithms:?}");
+    t.close().await;
+}
+
+/// Starts a private ssh-agent holding the test key (no passphrase), so the test
+/// never touches the user's own agent.
+#[tokio::test]
+#[ignore = "needs ./scripts/ssh-test-server.sh start and ssh-agent"]
+async fn agent_login() {
+    let dir = temp_dir("agent");
+    let socket = dir.join("agent.sock");
+    let mut agent = std::process::Command::new("ssh-agent")
+        .arg("-D")
+        .arg("-a")
+        .arg(&socket)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("ssh-agent");
+    for _ in 0..50 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let added = std::process::Command::new("ssh-add")
+        .arg(key_path("id_plain"))
+        .env("SSH_AUTH_SOCK", &socket)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("ssh-add");
+    assert!(added.success());
+
+    let result = connect(
+        params(SshAuth::Agent {
+            socket: Some(socket.clone()),
+        }),
+        SIZE,
+        accepting_prompt(Arc::default()),
+    )
+    .await;
+    let _ = agent.kill();
+    let _ = agent.wait(); // reap the process: no zombie left behind
+    let mut t = result.expect("agent authentication");
+    assert!(run(&mut t, "whoami", 70).await.contains(USER));
+    t.close().await;
+
+    // Empty agent: clear message, not a generic failure.
+    let mut empty = std::process::Command::new("ssh-agent")
+        .args(["-D", "-a"])
+        .arg(dir.join("empty.sock"))
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("ssh-agent");
+    for _ in 0..50 {
+        if dir.join("empty.sock").exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let err = connect(
+        params(SshAuth::Agent {
+            socket: Some(dir.join("empty.sock")),
+        }),
+        SIZE,
+        accepting_prompt(Arc::default()),
+    )
+    .await
+    .err()
+    .expect("empty agent must fail");
+    let _ = empty.kill();
+    let _ = empty.wait(); // reap the process: no zombie left behind
+    assert_eq!(err.code(), "agent");
 }

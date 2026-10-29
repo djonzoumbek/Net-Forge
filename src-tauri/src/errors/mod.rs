@@ -3,6 +3,8 @@
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
+use crate::security::known_hosts::HostKeyMismatch;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Entrée invalide : {0}")]
@@ -25,17 +27,53 @@ pub enum AppError {
     #[error("Clé privée : {0}")]
     PrivateKey(String),
 
+    #[error("La clé {0} est protégée par une passphrase : saisis-la.")]
+    PassphraseRequired(String),
+
+    #[error("Mot de passe requis pour ce profil.")]
+    PasswordRequired,
+
+    #[error("Agent SSH : {0}")]
+    Agent(String),
+
+    #[error(
+        "ATTENTION : la clé d'hôte de {}:{} a changé ! Connexion bloquée. \
+         Cela peut être une réinstallation légitime… ou une attaque de l'homme du milieu.",
+        .0.host, .0.port
+    )]
+    HostKeyChanged(Box<HostKeyMismatch>),
+
+    #[error("La clé d'hôte présentée est marquée comme révoquée (@revoked) : connexion refusée.")]
+    HostKeyRevoked,
+
     #[error("Clé d'hôte refusée : connexion annulée.")]
     HostKeyRejected,
 
     #[error(
-        "Aucun algorithme {kind} commun avec le serveur. Le serveur propose : {server}. \
-         Il s'agit probablement d'un équipement ancien : le mode compatibilité (phase 3) sera nécessaire."
+        "Aucun algorithme {kind} commun avec le serveur. Le serveur propose : {server}. {}",
+        if *.legacy_enabled {
+            "Le mode compatibilité est déjà actif : ces algorithmes ne sont pas pris en charge par NetForge."
+        } else {
+            "Équipement ancien ? Active le « mode compatibilité équipements anciens » dans le profil."
+        }
     )]
-    NoCommonAlgorithm { kind: String, server: String },
+    NoCommonAlgorithm {
+        kind: String,
+        server: String,
+        legacy_enabled: bool,
+    },
 
     #[error("Session {0} introuvable (déjà fermée ?).")]
     SessionNotFound(u64),
+
+    #[error("Élément introuvable : {0}.")]
+    NotFound(String),
+
+    #[error("Stockage : {0}")]
+    Storage(String),
+
+    #[error("Trousseau système : {0}")]
+    Keyring(String),
 
     #[error("Erreur SSH : {0}")]
     Ssh(String),
@@ -51,9 +89,17 @@ impl AppError {
             AppError::Timeout(_) => "timeout",
             AppError::AuthFailed(_) => "auth_failed",
             AppError::PrivateKey(_) => "private_key",
+            AppError::PassphraseRequired(_) => "passphrase_required",
+            AppError::PasswordRequired => "password_required",
+            AppError::Agent(_) => "agent",
             AppError::HostKeyRejected => "host_key_rejected",
+            AppError::HostKeyChanged(_) => "host_key_changed",
+            AppError::HostKeyRevoked => "host_key_revoked",
             AppError::NoCommonAlgorithm { .. } => "no_common_algorithm",
             AppError::SessionNotFound(_) => "session_not_found",
+            AppError::NotFound(_) => "not_found",
+            AppError::Storage(_) => "storage",
+            AppError::Keyring(_) => "keyring",
             AppError::Ssh(_) => "ssh",
         }
     }
@@ -77,6 +123,7 @@ impl From<russh::Error> for AppError {
             E::NoCommonAlgo { kind, theirs, .. } => AppError::NoCommonAlgorithm {
                 kind: format!("{kind:?}").to_lowercase(),
                 server: theirs.join(", "),
+                legacy_enabled: false,
             },
             E::UnknownKey => AppError::HostKeyRejected,
             E::ConnectionTimeout | E::KeepaliveTimeout | E::InactivityTimeout => {

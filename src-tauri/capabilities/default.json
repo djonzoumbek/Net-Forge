@@ -1,15 +1,27 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core IPC + the session commands, nothing else",
-  "windows": ["main"],
+  "description": "Main window: core IPC + NetForge commands, nothing else",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "allow-session-open-ssh",
+    "allow-session-open-profile",
     "allow-session-write",
     "allow-session-resize",
     "allow-session-ack",
     "allow-session-close",
-    "allow-session-answer-host-key"
+    "allow-session-answer-host-key",
+    "allow-library-list",
+    "allow-profile-create",
+    "allow-profile-update",
+    "allow-profile-delete",
+    "allow-profile-save-secret",
+    "allow-folder-create",
+    "allow-folder-rename",
+    "allow-folder-delete",
+    "allow-known-hosts-replace"
   ]
 }

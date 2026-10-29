@@ -110,6 +110,13 @@ mod tests {
     }
 
     impl Transport for MockTransport {
+        fn info(&self) -> crate::transport::ConnectionInfo {
+            crate::transport::ConnectionInfo {
+                protocol: "test",
+                encrypted: true,
+                algorithms: None,
+            }
+        }
         async fn recv(&mut self) -> TransportEvent {
             match self.incoming.recv().await {
                 Some(event) => event,

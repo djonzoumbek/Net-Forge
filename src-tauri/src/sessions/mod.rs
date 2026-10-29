@@ -11,8 +11,9 @@ use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::errors::AppError;
+use crate::security::known_hosts::{HostKeyMismatch, KnownHosts};
 use crate::transport::ssh::{self, HostKeyInfo, HostKeyPrompt, SshParams};
-use crate::transport::{TermSize, Transport};
+use crate::transport::{ConnectionInfo, TermSize, Transport};
 
 pub type SessionId = u64;
 
@@ -37,7 +38,13 @@ pub enum SessionEvent {
     HostKeyPrompt {
         info: HostKeyInfo,
     },
-    Connected,
+    Connected {
+        info: ConnectionInfo,
+    },
+    /// The server key differs from the recorded one: connection blocked.
+    HostKeyChanged {
+        mismatch: HostKeyMismatch,
+    },
     /// The connection could not be established.
     Failed {
         code: String,
@@ -84,8 +91,16 @@ impl SessionManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub fn open_ssh(&self, params: SshParams, size: TermSize, sinks: SessionSinks) -> SessionId {
-        self.spawn_session(sinks, size, move |ask| ssh::connect(params, size, ask))
+    pub fn open_ssh(
+        &self,
+        params: SshParams,
+        size: TermSize,
+        known_hosts: Arc<KnownHosts>,
+        sinks: SessionSinks,
+    ) -> SessionId {
+        self.spawn_session(sinks, size, move |ask| {
+            ssh::connect(params, size, known_hosts, ask)
+        })
     }
 
     /// Generic over the connection step so that tests can use a fake transport.
@@ -175,6 +190,13 @@ impl SessionManager {
 
         let mut transport = match connected {
             Ok(transport) => transport,
+            Err(AppError::HostKeyChanged(mismatch)) => {
+                tracing::warn!(session = id, host = %mismatch.host, "host key changed, connection blocked");
+                (sinks.event)(SessionEvent::HostKeyChanged {
+                    mismatch: *mismatch,
+                });
+                return;
+            }
             Err(e) => {
                 tracing::info!(session = id, code = e.code(), "connection failed");
                 (sinks.event)(SessionEvent::Failed {
@@ -190,8 +212,14 @@ impl SessionManager {
         {
             tracing::warn!(session = id, "resize failed: {e}");
         }
-        tracing::info!(session = id, "connected");
-        (sinks.event)(SessionEvent::Connected);
+        let info = transport.info();
+        let legacy = info
+            .algorithms
+            .as_ref()
+            .map(|a| a.legacy.join(","))
+            .unwrap_or_default();
+        tracing::info!(session = id, legacy = %legacy, "connected");
+        (sinks.event)(SessionEvent::Connected { info });
         runner::run_session(id, transport, commands, &sinks).await;
     }
 
@@ -239,6 +267,13 @@ mod tests {
     }
 
     impl Transport for IdleTransport {
+        fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                protocol: "test",
+                encrypted: true,
+                algorithms: None,
+            }
+        }
         async fn recv(&mut self) -> TransportEvent {
             std::future::pending().await
         }
@@ -284,7 +319,13 @@ mod tests {
         let id = manager.spawn_session(sinks, SIZE, move |_| async move {
             Ok(IdleTransport { closed: flag })
         });
-        wait_until(|| matches!(events.lock().unwrap().last(), Some(SessionEvent::Connected))).await;
+        wait_until(|| {
+            matches!(
+                events.lock().unwrap().last(),
+                Some(SessionEvent::Connected { .. })
+            )
+        })
+        .await;
         assert_eq!(manager.len(), 1);
 
         manager.send(id, SessionCommand::Close).await.unwrap();

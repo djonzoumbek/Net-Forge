@@ -5,6 +5,16 @@ const COMMANDS: &[&str] = &[
     "session_ack",
     "session_close",
     "session_answer_host_key",
+    "session_open_profile",
+    "library_list",
+    "profile_create",
+    "profile_update",
+    "profile_delete",
+    "profile_save_secret",
+    "folder_create",
+    "folder_rename",
+    "folder_delete",
+    "known_hosts_replace",
 ];
 
 fn main() {

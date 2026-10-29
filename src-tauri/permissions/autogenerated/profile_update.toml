@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-profile-update"
+description = "Enables the profile_update command without any pre-configured scope."
+commands.allow = ["profile_update"]
+
+[[permission]]
+identifier = "deny-profile-update"
+description = "Denies the profile_update command without any pre-configured scope."
+commands.deny = ["profile_update"]

@@ -27,6 +27,12 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
+keyring-core = "1"
+dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+hmac = "0.13"
+sha1 = "0.11"
+data-encoding = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
