@@ -4,7 +4,7 @@ import { closeSession } from "../../services/sessionService";
 import type { CommandButton } from "../../types/profiles";
 import type { SessionEvent, SessionId } from "../../types/session";
 import { CommandBar } from "../commands/CommandBar";
-import { TerminalView } from "../terminal/TerminalView";
+import { TerminalView, type TerminalAppearance } from "../terminal/TerminalView";
 import { MAX_AUTO_RECONNECT, type Tab } from "./tabs";
 
 interface SessionPanelProps {
@@ -23,6 +23,10 @@ interface SessionPanelProps {
   onEditButton: (button?: CommandButton) => void;
   onBroadcast: (tab: Tab) => void;
   onPasteRequest: (tab: Tab, text: string, paste: () => void) => void;
+  appearance: TerminalAppearance;
+  /** See TerminalView: `null` when the search bar is closed. */
+  searchToken: number | null;
+  onSearchClose: () => void;
 }
 
 /** Seconds left before `at` (a Date.now() timestamp), refreshed every second. */
@@ -102,6 +106,9 @@ export function SessionPanel(props: SessionPanelProps) {
         onEvent={(event) => props.onEvent(tab, event)}
         onSessionId={(id) => props.onSessionId(tab, id)}
         onPasteRequest={(text, paste) => props.onPasteRequest(tab, text, paste)}
+        appearance={props.appearance}
+        searchToken={props.searchToken}
+        onSearchClose={props.onSearchClose}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Modal } from "../../components/dialogs/Modal";
 import { toAppError } from "../../services/sessionService";
-import type { AuthMethod, Profile, ProfileInput, Protocol, SecretChange } from "../../types/profiles";
+import type { AuthMethod, LogMode, Profile, ProfileInput, Protocol, SecretChange } from "../../types/profiles";
 import { defaultPort } from "./ConnectionForm";
 import { flattenFolders, type Tree } from "./tree";
 
@@ -34,6 +34,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   const [autoReconnect, setAutoReconnect] = useState(profile?.autoReconnect ?? false);
   const [pagerAutoReply, setPagerAutoReply] = useState(profile?.pagerAutoReply ?? false);
   const [loginCommands, setLoginCommands] = useState(profile?.loginCommands ?? "");
+  const [sessionLog, setSessionLog] = useState<LogMode>(profile?.sessionLog ?? "off");
   const [saveSecret, setSaveSecret] = useState(false);
   const [savedAction, setSavedAction] = useState<SavedSecretAction>("keep");
   const [secret, setSecret] = useState("");
@@ -89,6 +90,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         autoReconnect,
         pagerAutoReply,
         loginCommands,
+        sessionLog,
       });
     } catch (e) {
       setError(toAppError(e).message);
@@ -288,6 +290,25 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
           <p className="hint warning-text">
             Ces commandes sont enregistrées en clair : n'y mets jamais de mot de passe.
           </p>
+        </fieldset>
+
+        <fieldset className="section">
+          <legend>Journal de session</legend>
+          <label className="field">
+            <span>Enregistrer la sortie du terminal dans un fichier horodaté</span>
+            <select value={sessionLog} onChange={(e) => setSessionLog(e.target.value as LogMode)}>
+              <option value="off">Désactivé</option>
+              <option value="text">Texte brut (séquences d'échappement retirées)</option>
+              <option value="raw">Octets bruts (rejouable avec cat)</option>
+            </select>
+          </label>
+          {sessionLog !== "off" && (
+            <p className="hint warning-text">
+              Le journal contient tout ce que l'équipement affiche, donc parfois des secrets
+              (configurations avec mots de passe ou clés, saisies renvoyées en écho). Fichier
+              lisible par toi seul (droits 600), dans le dossier choisi dans les réglages.
+            </p>
+          )}
         </fieldset>
 
         <div className="dialog-actions">

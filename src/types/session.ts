@@ -63,7 +63,7 @@ export interface ConnectionInfo {
 export type SessionEvent =
   | { type: "hostKeyPrompt"; info: HostKeyInfo }
   | { type: "hostKeyChanged"; mismatch: HostKeyMismatch }
-  | { type: "connected"; info: ConnectionInfo }
+  | { type: "connected"; info: ConnectionInfo; logFile: string | null; logError: string | null }
   | { type: "failed"; code: string; message: string }
   /** `lost`: connection lost (network), as opposed to a normal end (`exit`). */
   | { type: "closed"; reason: string; byRemote: boolean; lost: boolean };

@@ -1,4 +1,5 @@
 import type { Tab } from "../../features/sessions/tabs";
+import { usePointerDrag } from "../../hooks/usePointerDrag";
 import { WindowControls } from "./WindowFrame";
 
 interface TabBarProps {
@@ -6,6 +7,15 @@ interface TabBarProps {
   active: number | null;
   onActivate: (key: number | null) => void;
   onClose: (key: number) => void;
+  /** Drag and drop: put tab `key` before `beforeKey` (`null`: at the end). */
+  onMove: (key: number, beforeKey: number | null) => void;
+}
+
+/** Where a dragged tab lands; `mark` / `side` draw the insertion line. */
+interface TabDrop {
+  beforeKey: number | null;
+  mark: number;
+  side: "before" | "after";
 }
 
 /** Status dot colour: reuses the status bar classes. */
@@ -23,7 +33,25 @@ function dotClass(tab: Tab): string {
   }
 }
 
-export function TabBar({ tabs, active, onActivate, onClose }: TabBarProps) {
+export function TabBar({ tabs, active, onActivate, onClose, onMove }: TabBarProps) {
+  const { drag, startDrag } = usePointerDrag<number, TabDrop>({
+    findDrop: (element, _key, x) => {
+      const tabElement = element?.closest<HTMLElement>("[data-tab-key]");
+      if (!tabElement) {
+        // Free space after the last tab: move to the end.
+        const last = tabs[tabs.length - 1];
+        return element?.closest(".tabs-scroll") && last ? { beforeKey: null, mark: last.key, side: "after" } : null;
+      }
+      const key = Number(tabElement.dataset.tabKey);
+      const rect = tabElement.getBoundingClientRect();
+      if (x < rect.left + rect.width / 2) return { beforeKey: key, mark: key, side: "before" };
+      const index = tabs.findIndex((tab) => tab.key === key);
+      return { beforeKey: tabs[index + 1]?.key ?? null, mark: key, side: "after" };
+    },
+    onDrop: (key, drop) => onMove(key, drop.beforeKey),
+  });
+  const draggedTab = drag ? tabs.find((tab) => tab.key === drag.item) : undefined;
+
   return (
     <div className="tab-bar">
       <div className="tabs-scroll" role="tablist" aria-label="Sessions">
@@ -33,9 +61,18 @@ export function TabBar({ tabs, active, onActivate, onClose }: TabBarProps) {
             <div
               key={tab.key}
               role="tab"
+              data-tab-key={tab.key}
               aria-selected={tab.key === active}
-              className={`tab ${tab.key === active ? "active" : ""}`}
+              className={[
+                "tab",
+                tab.key === active ? "active" : "",
+                drag?.item === tab.key ? "dragged" : "",
+                drag?.drop?.mark === tab.key ? `drop-${drag.drop.side}` : "",
+              ].join(" ")}
               title={tab.target.title}
+              onPointerDown={(e) => {
+                if (!(e.target as Element).closest(".tab-close")) startDrag(e, tab.key);
+              }}
               onClick={() => onActivate(tab.key)}
               onAuxClick={(e) => {
                 if (e.button === 1) onClose(tab.key);
@@ -77,6 +114,11 @@ export function TabBar({ tabs, active, onActivate, onClose }: TabBarProps) {
       {/* Free space: moves the window (title bar), double-click maximizes. */}
       <div className="drag-region" data-tauri-drag-region />
       <WindowControls />
+      {drag && draggedTab && (
+        <div className="drag-ghost" style={{ left: drag.x + 12, top: drag.y + 8 }}>
+          {draggedTab.target.label}
+        </div>
+      )}
     </div>
   );
 }

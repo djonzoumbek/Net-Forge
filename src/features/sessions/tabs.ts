@@ -24,7 +24,7 @@ export interface SessionTarget {
 export type TabStatus =
   | { kind: "connecting" }
   | { kind: "hostKey"; info: HostKeyInfo }
-  | { kind: "connected"; info: ConnectionInfo }
+  | { kind: "connected"; info: ConnectionInfo; logFile: string | null; logError: string | null }
   | { kind: "hostKeyChanged"; mismatch: HostKeyMismatch }
   | { kind: "failed"; code: string; message: string }
   | { kind: "closed"; reason: string; byRemote: boolean };
@@ -64,6 +64,8 @@ export type TabsAction =
   | { type: "open"; target: SessionTarget }
   | { type: "activate"; key: number | null }
   | { type: "cycle"; step: 1 | -1 }
+  /** Drag and drop: puts tab `key` before `beforeKey` (`null`: at the end). */
+  | { type: "move"; key: number; beforeKey: number | null }
   | { type: "close"; key: number }
   /** `auto`: automatic reconnection (keeps counting attempts). */
   | { type: "retry"; key: number; target?: SessionTarget; auto?: boolean }
@@ -83,7 +85,7 @@ function statusFromEvent(event: SessionEvent): TabStatus {
     case "hostKeyChanged":
       return { kind: "hostKeyChanged", mismatch: event.mismatch };
     case "connected":
-      return { kind: "connected", info: event.info };
+      return { kind: "connected", info: event.info, logFile: event.logFile, logError: event.logError };
     case "failed":
       return { kind: "failed", code: event.code, message: event.message };
     case "closed":
@@ -116,6 +118,14 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
       const index = state.tabs.findIndex((tab) => tab.key === state.active);
       const next = (index + action.step + state.tabs.length) % state.tabs.length;
       return { ...state, active: state.tabs[index === -1 ? 0 : next].key };
+    }
+    case "move": {
+      const moved = state.tabs.find((tab) => tab.key === action.key);
+      if (!moved || action.key === action.beforeKey) return state;
+      const tabs = state.tabs.filter((tab) => tab.key !== action.key);
+      const index = action.beforeKey === null ? -1 : tabs.findIndex((tab) => tab.key === action.beforeKey);
+      tabs.splice(index === -1 ? tabs.length : index, 0, moved);
+      return { ...state, tabs };
     }
     case "close": {
       const index = state.tabs.findIndex((tab) => tab.key === action.key);

@@ -23,9 +23,22 @@ function openTabs(...labels: string[]): TabsState {
 const connected: SessionEvent = {
   type: "connected",
   info: { protocol: "ssh", encrypted: true, algorithms: null },
+  logFile: null,
+  logError: null,
 };
 
 describe("tabsReducer", () => {
+  it("moves a tab by drag and drop, keeping the active one", () => {
+    const state = openTabs("a", "b", "c", "d"); // keys 1..4, "d" active
+    const labels = (s: TabsState) => s.tabs.map((t) => t.target.label).join("");
+    expect(labels(tabsReducer(state, { type: "move", key: 4, beforeKey: 1 }))).toBe("dabc");
+    expect(labels(tabsReducer(state, { type: "move", key: 1, beforeKey: 3 }))).toBe("bacd");
+    expect(labels(tabsReducer(state, { type: "move", key: 1, beforeKey: null }))).toBe("bcda");
+    expect(tabsReducer(state, { type: "move", key: 2, beforeKey: 2 })).toBe(state);
+    expect(tabsReducer(state, { type: "move", key: 99, beforeKey: 1 })).toBe(state);
+    expect(tabsReducer(state, { type: "move", key: 4, beforeKey: 1 }).active).toBe(4);
+  });
+
   it("opens tabs with unique keys and activates the new one", () => {
     const state = openTabs("a", "b");
     expect(state.tabs.map((t) => t.key)).toEqual([1, 2]);

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import {
   ackSession,
@@ -11,9 +12,20 @@ import {
   type SessionOpener,
 } from "../../services/sessionService";
 import type { SessionEvent, SessionId } from "../../types/session";
+import type { ThemeName } from "../../types/settings";
+import { matchShortcut } from "../shortcuts";
 import { createAckBatcher, createInputQueue } from "./flowControl";
 import { needsPasteConfirmation } from "./paste";
-import { terminalTheme } from "./theme";
+import { SearchBar, type SearchOptions } from "./SearchBar";
+import { fontStack, themes } from "./theme";
+
+/** What the settings (and the zoom) control; applied live to open terminals. */
+export interface TerminalAppearance {
+  theme: ThemeName;
+  fontFamily: string;
+  fontSize: number;
+  scrollback: number;
+}
 
 interface TerminalViewProps {
   /** Must keep the same identity for the life of the session (it is a dependency). */
@@ -24,44 +36,53 @@ interface TerminalViewProps {
   active: boolean;
   /** Multi-line paste: ask the user, then call `paste()` to really send it. */
   onPasteRequest: (text: string, paste: () => void) => void;
-}
-
-/** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown switch tabs: xterm must let them through. */
-function isTabShortcut(event: KeyboardEvent): boolean {
-  return event.ctrlKey && (event.key === "Tab" || event.key === "PageUp" || event.key === "PageDown");
+  appearance: TerminalAppearance;
+  /** `null`: search bar closed; otherwise changes on each Ctrl+Shift+F. */
+  searchToken: number | null;
+  onSearchClose: () => void;
 }
 
 /**
  * Owns one xterm.js instance and the backend session behind it: the session is
  * opened on mount and closed on unmount.
  */
-export function TerminalView({ open, onEvent, onSessionId, active, onPasteRequest }: TerminalViewProps) {
+export function TerminalView(props: TerminalViewProps) {
+  const { open, active, appearance, searchToken, onSearchClose } = props;
+  const { theme, fontFamily, fontSize, scrollback } = appearance;
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   // Callbacks change on every parent render; keeping them in refs avoids
   // reopening the session each time.
-  const onEventRef = useRef(onEvent);
-  const onSessionIdRef = useRef(onSessionId);
-  const onPasteRequestRef = useRef(onPasteRequest);
+  const onEventRef = useRef(props.onEvent);
+  const onSessionIdRef = useRef(props.onSessionId);
+  const onPasteRequestRef = useRef(props.onPasteRequest);
+  // Read once at creation; later changes go through the effect below.
+  const appearanceRef = useRef(appearance);
   useEffect(() => {
-    onEventRef.current = onEvent;
-    onSessionIdRef.current = onSessionId;
-    onPasteRequestRef.current = onPasteRequest;
+    onEventRef.current = props.onEvent;
+    onSessionIdRef.current = props.onSessionId;
+    onPasteRequestRef.current = props.onPasteRequest;
+    appearanceRef.current = appearance;
   });
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const initial = appearanceRef.current;
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", monospace',
-      fontSize: 14,
-      scrollback: 5000,
-      theme: terminalTheme,
+      fontFamily: fontStack(initial.fontFamily),
+      fontSize: initial.fontSize,
+      scrollback: initial.scrollback,
+      theme: themes[initial.theme].colors,
     });
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
     term.open(container);
     fit.fit();
 
@@ -136,7 +157,9 @@ export function TerminalView({ open, onEvent, onSessionId, active, onPasteReques
 
     // Ctrl+Shift+C / Ctrl+Shift+V: copy/paste without stealing Ctrl+C from the shell.
     term.attachCustomKeyEventHandler((event) => {
-      if (isTabShortcut(event)) return false;
+      // Application shortcuts are not sent to the remote shell: the window
+      // listener (App) acts on them.
+      if (matchShortcut(event) !== null) return false;
       if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true;
       if (event.code === "KeyC" && term.hasSelection()) {
         void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
@@ -165,6 +188,8 @@ export function TerminalView({ open, onEvent, onSessionId, active, onPasteReques
     });
     observer.observe(container);
     termRef.current = term;
+    fitRef.current = fit;
+    searchRef.current = search;
 
     return () => {
       disposed = true;
@@ -175,6 +200,8 @@ export function TerminalView({ open, onEvent, onSessionId, active, onPasteReques
       acks.dispose();
       if (sessionId !== null) void closeSession(sessionId).catch(() => {});
       termRef.current = null;
+      fitRef.current = null;
+      searchRef.current = null;
       term.dispose();
     };
   }, [open]);
@@ -183,5 +210,48 @@ export function TerminalView({ open, onEvent, onSessionId, active, onPasteReques
     if (active) termRef.current?.focus();
   }, [active, open]);
 
-  return <div className="terminal-host" ref={containerRef} />;
+  // Settings changed (or zoom): applied without reopening the session.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = themes[theme].colors;
+    term.options.fontFamily = fontStack(fontFamily);
+    term.options.fontSize = fontSize;
+    term.options.scrollback = scrollback;
+    // New character size: recompute rows/cols (sent to the remote by onResize).
+    // Next frame: the renderer has measured the new font by then.
+    const frame = requestAnimationFrame(() => {
+      const container = containerRef.current;
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) fitRef.current?.fit();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [theme, fontFamily, fontSize, scrollback]);
+
+  function runSearch(text: string, options: SearchOptions, backwards: boolean): boolean {
+    const search = searchRef.current;
+    if (!search) return false;
+    try {
+      return backwards ? search.findPrevious(text, options) : search.findNext(text, options);
+    } catch {
+      // Invalid regular expression while it is being typed.
+      return false;
+    }
+  }
+
+  function closeSearch() {
+    termRef.current?.clearSelection();
+    onSearchClose();
+    termRef.current?.focus();
+  }
+
+  return (
+    <>
+      {searchToken !== null && <SearchBar focusToken={searchToken} onSearch={runSearch} onClose={closeSearch} />}
+      <div
+        className="terminal-host"
+        ref={containerRef}
+        style={{ background: themes[theme].colors.background }}
+      />
+    </>
+  );
 }

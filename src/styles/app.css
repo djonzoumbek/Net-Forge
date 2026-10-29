@@ -1,17 +1,122 @@
 :root {
+  /* Interface colours of "netforge-dark". `data-theme` on <html> holds the
+     theme name; the other themes override these variables below. */
   --bg: #0b1016;
   --panel: #151c25;
   --panel-border: #263241;
   --text: #d7dde4;
   --muted: #8a96a3;
   --accent: #f2b134;
+  --accent-hover: #f7c25a;
   --accent-text: #1a1206;
   --danger: #e5675e;
   --ok: #8cc27a;
+  --hover: #1d2733;
+  --button: #222c38;
+  --button-hover: #2a3645;
+  --tab-hover: #121922;
+  --banner: #1d2733;
+  --warning-bg: #3a2a12;
+  --warning-banner-text: #ffe0a8;
+  --warning-text: #ffd98a;
+  --danger-text: #ff8a80;
+  --secure-text: #c8f0b8;
+  --secure-bg: #20361c;
+  --error-text: #ffd2cf;
+  --error-bg: #3a1d1b;
+  --error-border: #6b2f2a;
+  /* Native widgets (select lists, scrollbars, date pickers) drawn dark too. */
+  color-scheme: dark;
   font-family: "Ubuntu", "Cantarell", "DejaVu Sans", sans-serif;
   font-size: 15px;
   color: var(--text);
   background: var(--bg);
+}
+
+:root[data-theme="netforge-light"] {
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --panel-border: #d3d8df;
+  --text: #1f2933;
+  --muted: #5f6b78;
+  --accent: #c27c00;
+  --accent-hover: #d98c00;
+  --accent-text: #ffffff;
+  --danger: #c4372d;
+  --ok: #2f8a3a;
+  --hover: #e3e7ec;
+  --button: #f3f5f7;
+  --button-hover: #e3e7ec;
+  --tab-hover: #e6e9ed;
+  --banner: #e6ebf1;
+  --warning-bg: #fff3d6;
+  --warning-banner-text: #6b4a00;
+  --warning-text: #8a5a00;
+  --danger-text: #b3261e;
+  --secure-text: #1e5c24;
+  --secure-bg: #d8f0d6;
+  --error-text: #8c1d16;
+  --error-bg: #fde4e1;
+  --error-border: #f0b4ad;
+  color-scheme: light;
+}
+
+/* Solarized (Ethan Schoonover's public palette): base03/base02 backgrounds. */
+:root[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --panel: #073642;
+  --panel-border: #0f4b59;
+  --text: #93a1a1;
+  --muted: #657b83;
+  --accent: #b58900;
+  --accent-hover: #cb9a00;
+  --accent-text: #002b36;
+  --danger: #dc322f;
+  --ok: #859900;
+  --hover: #0a4250;
+  --button: #0a4250;
+  --button-hover: #0f4b59;
+  --tab-hover: #04313d;
+  --banner: #0a4250;
+  --warning-bg: #3d3a10;
+  --warning-banner-text: #eee8d5;
+  --warning-text: #d7b13a;
+  --danger-text: #f0605d;
+  --secure-text: #c5d36a;
+  --secure-bg: #23400f;
+  --error-text: #fdd8d6;
+  --error-bg: #4a1c1f;
+  --error-border: #8a2b2a;
+  color-scheme: dark;
+}
+
+/* Black and white, bright accents, visible borders. */
+:root[data-theme="high-contrast"] {
+  --bg: #000000;
+  --panel: #000000;
+  --panel-border: #ffffff;
+  --text: #ffffff;
+  --muted: #e0e0e0;
+  --accent: #ffff00;
+  --accent-hover: #ffff80;
+  --accent-text: #000000;
+  --danger: #ff5555;
+  --ok: #55ff55;
+  --hover: #1a1a66;
+  --button: #000000;
+  --button-hover: #1a1a66;
+  --tab-hover: #1a1a1a;
+  --banner: #1a1a1a;
+  --warning-bg: #332b00;
+  --warning-banner-text: #ffff80;
+  --warning-text: #ffff55;
+  --danger-text: #ff8080;
+  --secure-text: #80ff80;
+  --secure-bg: #003300;
+  --error-text: #ffffff;
+  --error-bg: #550000;
+  --error-border: #ff5555;
+  color-scheme: dark;
 }
 
 * {
@@ -123,7 +228,7 @@ body,
 
 .tree-row:hover,
 .tree-row:focus-within {
-  background: #1d2733;
+  background: var(--hover);
 }
 
 .tree-label {
@@ -234,7 +339,29 @@ select {
   border-radius: 6px;
 }
 
+/* WebKitGTK draws native selects with the system GTK theme (often light),
+   which made our light text unreadable: draw the closed field ourselves. */
+select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 15px center,
+    right 10px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+/* The opened list. */
+option {
+  color: var(--text);
+  background: var(--panel);
+}
+
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -258,14 +385,14 @@ button {
   padding: 7px 14px;
   font: inherit;
   color: var(--text);
-  background: #222c38;
+  background: var(--button);
   border: 1px solid var(--panel-border);
   border-radius: 6px;
   cursor: pointer;
 }
 
 button:hover {
-  background: #2a3645;
+  background: var(--button-hover);
 }
 
 button.primary {
@@ -276,7 +403,7 @@ button.primary {
 }
 
 button.primary:hover {
-  background: #f7c25a;
+  background: var(--accent-hover);
 }
 
 button.danger {
@@ -322,11 +449,11 @@ button.link {
 }
 
 .warning-text {
-  color: #ffd98a;
+  color: var(--warning-text);
 }
 
 .danger-text {
-  color: #ff8a80;
+  color: var(--danger-text);
 }
 
 .badge {
@@ -338,8 +465,8 @@ button.link {
 }
 
 .badge.secure {
-  color: #c8f0b8;
-  background: #20361c;
+  color: var(--secure-text);
+  background: var(--secure-bg);
 }
 
 .badge.legacy {
@@ -355,9 +482,9 @@ button.link {
 .form-error {
   margin: 0;
   padding: 8px 10px;
-  color: #ffd2cf;
-  background: #3a1d1b;
-  border: 1px solid #6b2f2a;
+  color: var(--error-text);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
   border-radius: 6px;
 }
 
@@ -411,13 +538,13 @@ button.link {
 
 .banner {
   padding: 6px 12px;
-  background: #1d2733;
+  background: var(--banner);
   border-bottom: 1px solid var(--panel-border);
 }
 
 .banner.warning {
-  background: #3a2a12;
-  color: #ffe0a8;
+  background: var(--warning-bg);
+  color: var(--warning-banner-text);
 }
 
 /* min-height: 0 lets the flex child shrink, otherwise xterm cannot get smaller. */
@@ -460,7 +587,7 @@ button.link {
 }
 
 .dialog.danger h2 {
-  color: #ff8a80;
+  color: var(--danger-text);
 }
 
 .dialog h2 {
@@ -547,7 +674,7 @@ code {
 
 .tab:hover {
   color: var(--text);
-  background: #121922;
+  background: var(--tab-hover);
 }
 
 .tab.active {
@@ -573,7 +700,7 @@ code {
 
 .tab-close:hover {
   color: var(--text);
-  background: #2a3645;
+  background: var(--button-hover);
 }
 
 .new-tab {
@@ -657,7 +784,7 @@ code {
 
 .window-controls button:hover {
   color: var(--text);
-  background: #222c38;
+  background: var(--button);
 }
 
 .window-controls button.close:hover {
@@ -822,4 +949,117 @@ textarea {
   margin: 4px 0;
   padding-left: 20px;
   color: var(--muted);
+}
+
+/* ---------- Phase 6: search, session log, settings ---------- */
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.search-bar input:not([type="checkbox"]) {
+  width: 280px;
+  padding: 4px 8px;
+}
+
+.search-bar input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.search-bar .checkbox {
+  gap: 4px;
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 0.85rem;
+}
+
+.search-bar button {
+  padding: 2px 9px;
+}
+
+.search-status {
+  color: var(--danger-text);
+  font-size: 0.85rem;
+}
+
+.badge.recording {
+  color: var(--error-text);
+  background: var(--error-bg);
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.shortcut-list div {
+  display: flex;
+  gap: 12px;
+}
+
+.shortcut-list dt {
+  width: 230px;
+  flex: none;
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+kbd {
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 0.8rem;
+}
+
+/* ---------- Drag and drop (tabs, profiles, folders) ---------- */
+
+/* During a drag: no text selection, "grabbing" cursor everywhere. */
+body.dragging,
+body.dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.dragged {
+  opacity: 0.45;
+}
+
+.tree-row.drop-target,
+.tree.drop-target {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: 4px;
+}
+
+.tab.drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tab.drop-after {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
+/* Label following the pointer; ignores the pointer so that the element
+   underneath can be detected. */
+.drag-ghost {
+  position: fixed;
+  z-index: 100;
+  max-width: 240px;
+  padding: 3px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.35);
+  pointer-events: none;
 }

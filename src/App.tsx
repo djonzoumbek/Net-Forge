@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ConfirmDialog } from "./components/dialogs/ConfirmDialog";
 import { HostKeyChangedDialog } from "./components/dialogs/HostKeyChangedDialog";
 import { HostKeyDialog } from "./components/dialogs/HostKeyDialog";
@@ -21,6 +21,10 @@ import { ProfileTree } from "./features/connections/ProfileTree";
 import { buildTree } from "./features/connections/tree";
 import { useLibrary } from "./features/connections/useLibrary";
 import { SessionPanel } from "./features/sessions/SessionPanel";
+import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { useSettings } from "./features/settings/useSettings";
+import { matchShortcut, type ShortcutAction } from "./features/shortcuts";
+import type { TerminalAppearance } from "./features/terminal/TerminalView";
 import {
   initialTabs,
   reconnectDelay,
@@ -52,7 +56,12 @@ type Dialog =
   | { kind: "secret"; profile: Profile; secretKind: "password" | "passphrase"; tabKey?: number }
   | { kind: "button"; button?: CommandButton }
   | { kind: "broadcast"; fromKey: number }
-  | { kind: "paste"; tab: Tab; text: string; paste: () => void };
+  | { kind: "paste"; tab: Tab; text: string; paste: () => void }
+  | { kind: "settings" };
+
+/** Font sizes accepted by the backend settings; the zoom stays within them. */
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 36;
 
 /** Failures worth another automatic attempt (the device may come back). */
 const NETWORK_FAILURES = new Set(["unreachable", "timeout", "host_not_found"]);
@@ -99,8 +108,23 @@ function App() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const { settings, error: settingsError, save: saveSettings } = useSettings();
+  /** Ctrl++ / Ctrl+-: temporary offset added to the font size (not saved). */
+  const [zoom, setZoom] = useState(0);
+  /** Search bar: open on one tab; `token` changes on each Ctrl+Shift+F. */
+  const [search, setSearch] = useState<{ key: number; token: number } | null>(null);
 
   const activeTab = state.tabs.find((tab) => tab.key === state.active) ?? null;
+  const fontSize = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, settings.fontSize + zoom));
+  const appearance = useMemo<TerminalAppearance>(
+    () => ({ theme: settings.theme, fontFamily: settings.fontFamily, fontSize, scrollback: settings.scrollback }),
+    [settings.theme, settings.fontFamily, fontSize, settings.scrollback],
+  );
+
+  // The whole interface follows the theme (CSS variables in app.css).
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+  }, [settings.theme]);
 
   // Automatic reconnections: one timer per scheduled tab. Recreated when the tabs
   // change, with the remaining time.
@@ -116,19 +140,59 @@ function App() {
     return () => timers.forEach(clearTimeout);
   }, [state.tabs]);
 
-  // Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+PageDown / Ctrl+PageUp: switch tabs.
+  function runShortcut(action: ShortcutAction) {
+    // A dialog is open: its fields keep the keyboard (no tab closed by mistake).
+    if (dialog) return;
+    switch (action) {
+      case "newTab":
+        dispatch({ type: "activate", key: null });
+        break;
+      case "closeTab":
+        if (activeTab) dispatch({ type: "close", key: activeTab.key });
+        break;
+      case "duplicateTab":
+        // Same target, typed secret included (it stays in the opener only).
+        if (activeTab) dispatch({ type: "open", target: { ...activeTab.target, secretToSave: undefined } });
+        break;
+      case "nextTab":
+        dispatch({ type: "cycle", step: 1 });
+        break;
+      case "previousTab":
+        dispatch({ type: "cycle", step: -1 });
+        break;
+      case "search":
+        if (activeTab) setSearch({ key: activeTab.key, token: Date.now() });
+        break;
+      case "zoomIn":
+        setZoom((z) => Math.min(z + 1, MAX_FONT_SIZE - settings.fontSize));
+        break;
+      case "zoomOut":
+        setZoom((z) => Math.max(z - 1, MIN_FONT_SIZE - settings.fontSize));
+        break;
+      case "zoomReset":
+        setZoom(0);
+        break;
+      case "toggleSidebar":
+        setSidebarOpen((open) => !open);
+        break;
+      case "settings":
+        setDialog({ kind: "settings" });
+        break;
+    }
+  }
+
+  // Keyboard shortcuts (src/features/shortcuts.ts). The listener is installed
+  // once and calls the latest `runShortcut`, which sees the current state.
+  const runShortcutRef = useRef(runShortcut);
+  useEffect(() => {
+    runShortcutRef.current = runShortcut;
+  });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!event.ctrlKey) return;
-      const step =
-        event.key === "Tab" ? (event.shiftKey ? -1 : 1)
-        : event.key === "PageDown" ? 1
-        : event.key === "PageUp" ? -1
-        : 0;
-      if (step !== 0) {
-        event.preventDefault();
-        dispatch({ type: "cycle", step });
-      }
+      const action = matchShortcut(event);
+      if (action === null) return;
+      event.preventDefault();
+      runShortcutRef.current(action);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -260,6 +324,17 @@ function App() {
     if (!dialog) return null;
     const close = () => setDialog(null);
     switch (dialog.kind) {
+      case "settings":
+        return (
+          <SettingsDialog
+            settings={settings}
+            onSave={async (next) => {
+              await saveSettings(next);
+              setDialog(null);
+            }}
+            onCancel={close}
+          />
+        );
       case "button":
         return (
           <ButtonEditor
@@ -373,8 +448,9 @@ function App() {
       {sidebarOpen && (
         <ProfileTree
           tree={tree}
-          error={actionError ?? libraryError ?? buttonsError}
+          error={actionError ?? libraryError ?? buttonsError ?? settingsError}
           onQuickConnect={() => dispatch({ type: "activate", key: null })}
+          onSettings={() => setDialog({ kind: "settings" })}
           onConnect={connectProfile}
           onNewProfile={(folderId) => setDialog({ kind: "profile", folderId })}
           onEditProfile={(profile) => setDialog({ kind: "profile", profile, folderId: profile.folderId })}
@@ -382,6 +458,8 @@ function App() {
           onNewFolder={(parentId) => setDialog({ kind: "newFolder", parentId })}
           onRenameFolder={(folder) => setDialog({ kind: "renameFolder", folder })}
           onDeleteFolder={(folder) => setDialog({ kind: "deleteFolder", folder })}
+          onMoveProfile={(profile, folderId) => mutate(() => profiles.moveProfile(profile.id, folderId))}
+          onMoveFolder={(folder, parentId) => mutate(() => profiles.moveFolder(folder.id, parentId))}
         />
       )}
 
@@ -391,6 +469,7 @@ function App() {
           active={state.active}
           onActivate={(key) => dispatch({ type: "activate", key })}
           onClose={(key) => dispatch({ type: "close", key })}
+          onMove={(key, beforeKey) => dispatch({ type: "move", key, beforeKey })}
         />
         <div className="panels">
           {state.active === null && (
@@ -417,6 +496,9 @@ function App() {
               onEditButton={(button) => setDialog({ kind: "button", button })}
               onBroadcast={(t) => setDialog({ kind: "broadcast", fromKey: t.key })}
               onPasteRequest={(t, text, paste) => setDialog({ kind: "paste", tab: t, text, paste })}
+              appearance={appearance}
+              searchToken={search?.key === tab.key ? search.token : null}
+              onSearchClose={() => setSearch(null)}
               onSessionId={(t, id) => dispatch({ type: "sessionId", key: t.key, attempt: t.attempt, id })}
               onRetry={retry}
               onClose={(t) => dispatch({ type: "close", key: t.key })}

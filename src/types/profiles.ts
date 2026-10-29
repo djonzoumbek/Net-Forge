@@ -36,7 +36,11 @@ export interface SessionOptions {
   pagerAutoReply: boolean;
   /** One command per line, sent at the first prompt. Stored in clear. */
   loginCommands: string;
+  /** Session recording: plain text (cleaned) or raw bytes. */
+  sessionLog: LogMode;
 }
+
+export type LogMode = "off" | "text" | "raw";
 
 export interface Library {
   folders: Folder[];

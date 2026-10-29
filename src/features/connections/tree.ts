@@ -41,3 +41,16 @@ export function flattenFolders(tree: Tree): { folder: Folder; depth: number }[] 
   walk(tree.folders, 0);
   return out;
 }
+
+/** True when `folderId` is `ancestorId` itself or one of its sub-folders: a
+ * folder cannot be dropped there (the backend refuses it too). */
+export function isInsideFolder(folders: Folder[], folderId: number, ancestorId: number): boolean {
+  const parents = new Map(folders.map((f) => [f.id, f.parentId]));
+  // Bounded walk: a corrupted (looping) hierarchy cannot hang the interface.
+  let current: number | null | undefined = folderId;
+  for (let i = 0; i <= folders.length && current != null; i++) {
+    if (current === ancestorId) return true;
+    current = parents.get(current);
+  }
+  return false;
+}

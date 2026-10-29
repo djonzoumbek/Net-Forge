@@ -63,6 +63,16 @@ export function StatusBar({ title, status, sidebarOpen, onToggleSidebar, onDisco
       <span className="session-label">{title}</span>
       <span className="status-text">{statusText[status.kind]}</span>
       {status.kind === "connected" && <SecurityBadges info={status.info} />}
+      {status.kind === "connected" && status.logFile && (
+        <span className="badge recording" title={`Journal de session : ${status.logFile}`}>
+          ● Journal
+        </span>
+      )}
+      {status.kind === "connected" && status.logError && (
+        <span className="badge danger" title={status.logError}>
+          Journal impossible
+        </span>
+      )}
       <span className="spacer" />
       {live ? (
         <button onClick={onDisconnect}>{status.kind === "connected" ? "Déconnecter" : "Annuler"}</button>
