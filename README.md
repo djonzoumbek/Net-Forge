@@ -4,10 +4,11 @@ Client de terminal desktop personnel (SSH, puis Telnet et série) pour administr
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
 Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
 
-**État : phase 5 (fonctions d'administration réseau).** SSH et Telnet, une session
+**État : phase 6 (journalisation et confort).** SSH et Telnet, une session
 par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
-automatique, barre de commandes, envoi multi-sessions, gestion du pager.
+automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
+session, recherche dans l'historique, thèmes, polices et raccourcis clavier.
 
 ## Prérequis (Ubuntu)
 
@@ -31,9 +32,45 @@ Logs techniques : sortie standard, niveau réglable avec `RUST_LOG`
 (ex. `RUST_LOG=netforge_lib=debug npm run tauri dev`). Ils ne contiennent ni
 mots de passe ni contenu des sessions.
 
-Raccourcis : `Ctrl+Shift+C` copier la sélection, `Ctrl+Shift+V` coller,
-`Ctrl+Tab` / `Ctrl+Shift+Tab` (ou `Ctrl+PageDown` / `Ctrl+PageUp`) changer d'onglet,
-clic molette sur un onglet pour le fermer.
+## Raccourcis clavier
+
+| Raccourci | Action |
+|---|---|
+| `Ctrl+Shift+T` | nouvelle connexion |
+| `Ctrl+Shift+D` | dupliquer l'onglet (même cible) |
+| `Ctrl+Shift+W` (ou clic molette sur l'onglet) | fermer l'onglet |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+PageDown` / `Ctrl+PageUp` | onglet suivant / précédent |
+| `Ctrl+Shift+F` | rechercher dans l'historique (Entrée / Maj+Entrée, Échap pour fermer) |
+| `Ctrl+Shift+C` / `Ctrl+Shift+V` | copier / coller |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | agrandir / réduire / taille normale du texte (non enregistré) |
+| `Ctrl+Shift+B` | afficher / masquer les profils |
+| `Ctrl+,` | réglages |
+
+Ces raccourcis ne sont jamais envoyés au terminal distant ; `Ctrl+C`, `Ctrl+D`,
+`Ctrl+Z`, `Ctrl+R`, `Ctrl+W`… restent au shell.
+
+**Glisser-déposer** : glisser un onglet pour changer l'ordre des sessions ; glisser un
+profil ou un dossier sur un dossier pour l'y ranger (ou dans l'espace vide de la liste
+pour le remettre à la racine). `Échap` annule. Un dossier ne peut pas être déposé dans
+un de ses propres sous-dossiers.
+
+## Réglages et journal de session
+
+- **Réglages** (`⚙` dans la barre des profils ou `Ctrl+,`) : thème du terminal
+  (NetForge sombre/clair, Solarized sombre, contraste élevé), police et taille, taille
+  de l'historique (1 000 à 200 000 lignes par onglet, 10 000 par défaut), dossier des
+  journaux. Appliqués immédiatement aux onglets ouverts.
+- **Journal de session** (option par profil, désactivé par défaut) : un fichier
+  horodaté `<profil>_<date>.log` par connexion, dans `~/Documents/NetForge/logs/`
+  (ou le dossier choisi), droits `0600`. Deux formats :
+  - *texte brut* : séquences d'échappement, couleurs et invites du pager effacées,
+    lisible dans n'importe quel éditeur ;
+  - *octets bruts* : exactement ce qui a été reçu, rejouable avec `cat`.
+
+  ⚠ Le journal contient tout ce que l'équipement affiche, donc parfois des secrets
+  (configurations, saisies renvoyées en écho). Un badge « ● Journal » le signale.
+  L'écriture se fait dans un thread dédié : si le disque ne suit pas, la session
+  n'est jamais ralentie (les octets perdus sont signalés dans le fichier).
 
 ## Administration réseau
 
@@ -73,6 +110,8 @@ Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) :
 | `netforge.db` (+ `-wal`, `-shm`) | profils et dossiers (SQLite). **Aucun secret** : seulement le nom de l'entrée du trousseau |
 | `known_hosts` | clés d'hôte acceptées dans NetForge (format OpenSSH, `0600`) |
 
+Journaux de session (si activés) : `~/Documents/NetForge/logs/` par défaut.
+
 - Mots de passe et passphrases : trousseau système (GNOME Keyring, service « NetForge »,
   entrées `profile-<id>`), visibles dans l'application « Mots de passe et clés ».
 - `~/.ssh/known_hosts` est lu (jamais modifié) : un serveur déjà connu d'OpenSSH est
@@ -100,7 +139,7 @@ seulement, comme un vieux Cisco IOS / Huawei VRP) et Telnet port **2323**
 
 ```bash
 ./scripts/ssh-test-server.sh start        # utilisateur netforge / mot de passe netforge-test
-cd src-tauri && cargo test -- --ignored
+cd src-tauri && cargo test -- --ignored   # voir la remarque ci-dessous
 ./scripts/ssh-test-server.sh rotate-keys  # nouvelles clés d'hôte (test « clé modifiée »)
 ./scripts/ssh-test-server.sh stop
 ```
@@ -110,14 +149,22 @@ entrée `netforge-test-entry` dans le vrai trousseau.
 
 Les clés de test sont générées dans `src-tauri/target/ssh-test/` (ignoré par git) :
 `id_plain` (sans passphrase) et `id_pass` (passphrase `test-passphrase`).
-Le test `network_cut_is_detected_by_keepalive` met le conteneur en pause environ
-une minute.
+Le test `network_cut_is_detected_by_keepalive` met le conteneur en pause environ une
+minute : lancé en même temps que les autres, il les fait échouer. Lance-le à part :
+
+```bash
+cargo test -- --include-ignored --skip network_cut_is_detected_by_keepalive
+cargo test -- --ignored network_cut_is_detected_by_keepalive
+```
 
 ## Organisation
 
 ```
 src/                      Frontend React + TypeScript
-  features/terminal/      xterm.js, contrôle de flux de la sortie, file d'entrée
+  features/terminal/      xterm.js, contrôle de flux de la sortie, file d'entrée,
+                          thèmes, barre de recherche
+  features/settings/      réglages de l'application
+  features/shortcuts.ts   raccourcis clavier (définition unique)
   features/sessions/      onglets (reducer, reconnexion auto), panneau d'une session
   features/commands/      barre de commandes, diffusion multi-sessions
   features/connections/   connexion rapide, arborescence et éditeur de profils
@@ -127,10 +174,11 @@ src/                      Frontend React + TypeScript
 src-tauri/src/
   commands/               commandes Tauri (validation, couche fine)
   sessions/               gestionnaire de sessions, boucle par session,
-                          automatismes (pager, invite, séquences)
+                          automatismes (pager, invite, séquences),
+                          journal de session (logger.rs)
   transport/              trait commun, ssh/ (russh, algorithmes modernes/legacy),
                           telnet/ (négociation RFC 854/1073/1091), net.rs (TCP)
-  persistence/            SQLite : migrations, profils, dossiers
+  persistence/            SQLite : migrations, profils, dossiers, réglages
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
 src-tauri/migrations/     migrations SQL versionnées
