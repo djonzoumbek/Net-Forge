@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- NetForge icon: a terminal prompt (">_") linked to three network nodes.
+       Original design, NetForge palette (deep blue-grey, amber accent). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2733"/>
+      <stop offset="1" stop-color="#0b1016"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#2f4a63" stroke-width="16"/>
+  <!-- links between the nodes -->
+  <g stroke="#5fa8e0" stroke-width="22" stroke-linecap="round" opacity="0.9">
+    <line x1="700" y1="300" x2="790" y2="470"/>
+    <line x1="790" y1="470" x2="690" y2="640"/>
+    <line x1="700" y1="300" x2="690" y2="640"/>
+  </g>
+  <g fill="#5fa8e0">
+    <circle cx="700" cy="300" r="52"/>
+    <circle cx="790" cy="470" r="52"/>
+    <circle cx="690" cy="640" r="52"/>
+  </g>
+  <!-- prompt -->
+  <polyline points="210,330 400,470 210,610" fill="none" stroke="#f2b134" stroke-width="80"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="250" y1="760" x2="560" y2="760" stroke="#d7dde4" stroke-width="72" stroke-linecap="round"/>
+</svg>
