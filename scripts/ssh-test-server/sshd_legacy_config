@@ -1,0 +1,9 @@
+# Simulates an old Cisco IOS / Huawei VRP SSH server: only SHA-1 key exchanges,
+# CBC ciphers, hmac-sha1 and ssh-rsa host key signatures.
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKeyAlgorithms ssh-rsa
+KexAlgorithms diffie-hellman-group1-sha1,diffie-hellman-group14-sha1
+Ciphers aes128-cbc,3des-cbc
+MACs hmac-sha1
+PubkeyAcceptedAlgorithms +ssh-rsa
+PasswordAuthentication yes
