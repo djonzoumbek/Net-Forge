@@ -19,6 +19,8 @@ use crate::errors::AppError;
 pub struct TelnetParams {
     pub host: String,
     pub port: u16,
+    /// Interval of the Telnet NOP + TCP keepalive; `None` disables both.
+    pub keepalive: Option<Duration>,
 }
 
 enum Outgoing {
@@ -36,12 +38,18 @@ pub struct TelnetTransport {
 }
 
 pub async fn connect(params: TelnetParams, size: TermSize) -> Result<TelnetTransport, AppError> {
-    let tcp = net::open_tcp(&params.host, params.port).await?;
+    let tcp = net::open_tcp(&params.host, params.port, params.keepalive).await?;
     // Small bounded channels: if the UI is behind, the I/O task stops reading the
     // socket and TCP flow control slows the device down.
     let (incoming_tx, incoming) = mpsc::channel(8);
     let (outgoing, outgoing_rx) = mpsc::channel(64);
-    let io_task = tokio::spawn(run_io(tcp, size, incoming_tx, outgoing_rx));
+    let io_task = tokio::spawn(run_io(
+        tcp,
+        size,
+        params.keepalive,
+        incoming_tx,
+        outgoing_rx,
+    ));
     Ok(TelnetTransport {
         incoming,
         outgoing,
@@ -52,6 +60,7 @@ pub async fn connect(params: TelnetParams, size: TermSize) -> Result<TelnetTrans
 async fn run_io(
     tcp: TcpStream,
     size: TermSize,
+    keepalive: Option<Duration>,
     incoming: mpsc::Sender<TransportEvent>,
     mut outgoing: mpsc::Receiver<Outgoing>,
 ) {
@@ -61,10 +70,18 @@ async fn run_io(
     let mut buffer = vec![0u8; 16 * 1024];
     // Data decoded but not yet accepted by the session (channel full).
     let mut pending: Option<Vec<u8>> = None;
+    // IAC NOP: invisible for the device, but keeps firewalls/NAT from dropping an
+    // idle session, and makes a dead connection fail on write.
+    let mut nop_timer = keepalive.map(|interval| {
+        let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        timer
+    });
 
-    let reason = 'io: {
+    // `Lost` for errors, `Closed` when the device ends the session itself.
+    let end = 'io: {
         if let Err(e) = writer.write_all(&codec.initial_negotiation()).await {
-            break 'io format!("Connexion perdue : {e}.");
+            break 'io lost(e);
         }
         loop {
             tokio::select! {
@@ -79,24 +96,29 @@ async fn run_io(
                         }
                     };
                     if let Err(e) = writer.write_all(&bytes).await {
-                        break 'io format!("Connexion perdue : {e}.");
+                        break 'io lost(e);
                     }
                 }
                 read = reader.read(&mut buffer), if pending.is_none() => match read {
-                    Ok(0) => break 'io "Connexion fermée par l'équipement.".to_string(),
+                    Ok(0) => break 'io TransportEvent::Closed("Connexion fermée par l'équipement.".into()),
                     Ok(n) => {
                         let decoded = codec.decode(&buffer[..n]);
                         if !decoded.reply.is_empty()
                             && let Err(e) = writer.write_all(&decoded.reply).await
                         {
-                            break 'io format!("Connexion perdue : {e}.");
+                            break 'io lost(e);
                         }
                         if !decoded.data.is_empty() {
                             pending = Some(decoded.data);
                         }
                     }
-                    Err(e) => break 'io format!("Connexion perdue : {e}."),
+                    Err(e) => break 'io lost(e),
                 },
+                _ = next_tick(&mut nop_timer) => {
+                    if let Err(e) = writer.write_all(&protocol::NOP).await {
+                        break 'io lost(e);
+                    }
+                }
                 permit = incoming.reserve(), if pending.is_some() => match permit {
                     Ok(permit) => permit.send(TransportEvent::Data(pending.take().unwrap_or_default())),
                     Err(_) => return,
@@ -108,7 +130,21 @@ async fn run_io(
     if let Some(data) = pending.take() {
         let _ = incoming.send(TransportEvent::Data(data)).await;
     }
-    let _ = incoming.send(TransportEvent::Closed(reason)).await;
+    let _ = incoming.send(end).await;
+}
+
+/// Next keepalive tick, or never when keepalive is disabled.
+async fn next_tick(timer: &mut Option<tokio::time::Interval>) {
+    match timer {
+        Some(timer) => {
+            timer.tick().await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+fn lost(error: std::io::Error) -> TransportEvent {
+    TransportEvent::Lost(format!("Connexion perdue : {error}."))
 }
 
 impl Transport for TelnetTransport {

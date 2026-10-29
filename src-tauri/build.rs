@@ -16,6 +16,11 @@ const COMMANDS: &[&str] = &[
     "folder_rename",
     "folder_delete",
     "known_hosts_replace",
+    "session_send_sequence",
+    "buttons_list",
+    "button_create",
+    "button_update",
+    "button_delete",
 ];
 
 fn main() {

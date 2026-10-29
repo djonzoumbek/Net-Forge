@@ -1,6 +1,9 @@
 //! Session manager: creates sessions, routes commands to them, tracks their lifetime.
 
+mod automation;
 mod runner;
+
+pub use runner::Automation;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -22,6 +25,11 @@ pub type SessionId = u64;
 #[derive(Debug)]
 pub enum SessionCommand {
     Write(Vec<u8>),
+    /// Lines typed one after the other (each followed by Enter), `delay` apart.
+    Sequence {
+        lines: Vec<String>,
+        delay: std::time::Duration,
+    },
     Resize(TermSize),
     /// The UI rendered this many bytes of output (flow control, see `runner`).
     Ack(usize),
@@ -55,6 +63,8 @@ pub enum SessionEvent {
     Closed {
         reason: String,
         by_remote: bool,
+        /// Connection lost (as opposed to a normal end): may trigger auto-reconnect.
+        lost: bool,
     },
 }
 
@@ -97,9 +107,10 @@ impl SessionManager {
         params: SshParams,
         size: TermSize,
         known_hosts: Arc<KnownHosts>,
+        automation: Automation,
         sinks: SessionSinks,
     ) -> SessionId {
-        self.spawn_session(sinks, size, move |ask| {
+        self.spawn_session(sinks, size, automation, move |ask| {
             ssh::connect(params, size, known_hosts, ask)
         })
     }
@@ -108,10 +119,13 @@ impl SessionManager {
         &self,
         params: TelnetParams,
         size: TermSize,
+        automation: Automation,
         sinks: SessionSinks,
     ) -> SessionId {
         // Telnet has no host key: the prompt callback is simply never used.
-        self.spawn_session(sinks, size, move |_ask| telnet::connect(params, size))
+        self.spawn_session(sinks, size, automation, move |_ask| {
+            telnet::connect(params, size)
+        })
     }
 
     /// Generic over the connection step so that tests can use a fake transport.
@@ -119,6 +133,7 @@ impl SessionManager {
         &self,
         sinks: SessionSinks,
         initial_size: TermSize,
+        automation: Automation,
         connect: impl FnOnce(HostKeyPrompt) -> F + Send + 'static,
     ) -> SessionId
     where
@@ -142,7 +157,7 @@ impl SessionManager {
         tauri::async_runtime::spawn(async move {
             tracing::info!(session = id, "session task started");
             manager
-                .drive(id, sinks, initial_size, connect, commands_rx)
+                .drive(id, sinks, initial_size, automation, connect, commands_rx)
                 .await;
             manager.sessions().remove(&id);
             // Everything the session owned (transport, socket, channels, buffers)
@@ -157,6 +172,7 @@ impl SessionManager {
         id: SessionId,
         sinks: Arc<SessionSinks>,
         initial_size: TermSize,
+        automation: Automation,
         connect: impl FnOnce(HostKeyPrompt) -> F,
         mut commands: mpsc::Receiver<SessionCommand>,
     ) where
@@ -190,11 +206,16 @@ impl SessionManager {
                         (sinks.event)(SessionEvent::Closed {
                             reason: "Connexion annulée.".into(),
                             by_remote: false,
+                            lost: false,
                         });
                         return;
                     }
                     // Nothing to send input to yet.
-                    Some(SessionCommand::Write(_) | SessionCommand::Ack(_)) => {}
+                    Some(
+                        SessionCommand::Write(_)
+                        | SessionCommand::Sequence { .. }
+                        | SessionCommand::Ack(_),
+                    ) => {}
                 },
             }
         };
@@ -231,7 +252,7 @@ impl SessionManager {
             .unwrap_or_default();
         tracing::info!(session = id, legacy = %legacy, "connected");
         (sinks.event)(SessionEvent::Connected { info });
-        runner::run_session(id, transport, commands, &sinks).await;
+        runner::run_session(id, transport, commands, &sinks, automation).await;
     }
 
     pub async fn send(&self, id: SessionId, command: SessionCommand) -> Result<(), AppError> {
@@ -330,7 +351,7 @@ mod tests {
         let closed = Arc::new(Mutex::new(false));
         let (sinks, events) = recording_sinks();
         let flag = closed.clone();
-        let id = manager.spawn_session(sinks, SIZE, move |_| async move {
+        let id = manager.spawn_session(sinks, SIZE, Automation::default(), move |_| async move {
             Ok(IdleTransport { closed: flag })
         });
         wait_until(|| {
@@ -355,7 +376,7 @@ mod tests {
     async fn failed_connection_is_reported_and_released() {
         let manager = SessionManager::default();
         let (sinks, events) = recording_sinks();
-        manager.spawn_session(sinks, SIZE, |_| async {
+        manager.spawn_session(sinks, SIZE, Automation::default(), |_| async {
             Err::<IdleTransport, _>(AppError::AuthFailed("password".into()))
         });
         wait_until(|| manager.len() == 0).await;
@@ -369,7 +390,7 @@ mod tests {
     async fn host_key_answer_reaches_the_connecting_task() {
         let manager = SessionManager::default();
         let (sinks, events) = recording_sinks();
-        let id = manager.spawn_session(sinks, SIZE, |ask| async move {
+        let id = manager.spawn_session(sinks, SIZE, Automation::default(), |ask| async move {
             let info = HostKeyInfo {
                 host: "lab".into(),
                 port: 22,
@@ -402,16 +423,26 @@ mod tests {
     #[tokio::test]
     async fn sessions_get_distinct_ids() {
         let manager = SessionManager::default();
-        let a = manager.spawn_session(recording_sinks().0, SIZE, |_| async {
-            Ok(IdleTransport {
-                closed: Arc::default(),
-            })
-        });
-        let b = manager.spawn_session(recording_sinks().0, SIZE, |_| async {
-            Ok(IdleTransport {
-                closed: Arc::default(),
-            })
-        });
+        let a = manager.spawn_session(
+            recording_sinks().0,
+            SIZE,
+            Automation::default(),
+            |_| async {
+                Ok(IdleTransport {
+                    closed: Arc::default(),
+                })
+            },
+        );
+        let b = manager.spawn_session(
+            recording_sinks().0,
+            SIZE,
+            Automation::default(),
+            |_| async {
+                Ok(IdleTransport {
+                    closed: Arc::default(),
+                })
+            },
+        );
         assert_ne!(a, b);
     }
 }

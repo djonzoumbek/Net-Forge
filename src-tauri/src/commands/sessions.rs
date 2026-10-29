@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Deserialize;
 use tauri::State;
@@ -13,13 +14,20 @@ use crate::persistence::Database;
 use crate::persistence::profiles::{self, AuthMethod, Protocol};
 use crate::security::known_hosts::KnownHosts;
 use crate::security::secrets::Secrets;
-use crate::sessions::{SessionCommand, SessionEvent, SessionId, SessionManager, SessionSinks};
+use crate::sessions::{
+    Automation, SessionCommand, SessionEvent, SessionId, SessionManager, SessionSinks,
+};
 use crate::transport::TermSize;
 use crate::transport::ssh::{SshAuth, SshParams};
 use crate::transport::telnet::TelnetParams;
 
 /// Upper bound for one `session_write` call (a large paste).
 const MAX_WRITE: usize = 1024 * 1024;
+/// Keepalive of quick connections (profiles have their own setting).
+const DEFAULT_KEEPALIVE: Duration = Duration::from_secs(30);
+/// Limits of a command sequence (button, broadcast).
+const MAX_SEQUENCE_BYTES: usize = 64 * 1024;
+const MAX_SEQUENCE_LINES: usize = 500;
 
 #[derive(Deserialize)]
 #[serde(
@@ -86,6 +94,7 @@ impl SshConnectRequest {
             username,
             auth,
             legacy: self.legacy,
+            keepalive: Some(DEFAULT_KEEPALIVE),
         })
     }
 }
@@ -129,7 +138,13 @@ pub fn session_open_ssh(
     let size = size.validate()?;
     tracing::info!(host = %params.host, port = params.port, "opening SSH session");
     let known_hosts = Arc::clone(&known_hosts);
-    Ok(manager.open_ssh(params, size, known_hosts, sinks(on_data, on_event)))
+    Ok(manager.open_ssh(
+        params,
+        size,
+        known_hosts,
+        Automation::default(),
+        sinks(on_data, on_event),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -150,6 +165,7 @@ impl TelnetConnectRequest {
         Ok(TelnetParams {
             host,
             port: self.port,
+            keepalive: Some(DEFAULT_KEEPALIVE),
         })
     }
 }
@@ -174,7 +190,12 @@ pub fn session_open_telnet(
     let params = request.into_params()?;
     let size = size.validate()?;
     tracing::info!(host = %params.host, port = params.port, "opening Telnet session");
-    Ok(manager.open_telnet(params, size, sinks(on_data, on_event)))
+    Ok(manager.open_telnet(
+        params,
+        size,
+        Automation::default(),
+        sinks(on_data, on_event),
+    ))
 }
 
 /// Connects with a saved profile. `secret` is the password / passphrase typed by
@@ -199,13 +220,20 @@ pub async fn session_open_profile(
     let (profile, saved) = db
         .run(move |conn| profiles::get_with_secret(conn, &secrets, profile_id))
         .await?;
+    let keepalive = (profile.options.keepalive_secs > 0)
+        .then(|| Duration::from_secs(profile.options.keepalive_secs.into()));
+    let automation = Automation {
+        pager_auto_reply: profile.options.pager_auto_reply,
+        login_commands: profile.options.login_command_lines(),
+    };
     if profile.protocol == Protocol::Telnet {
         let params = TelnetParams {
             host: profile.host,
             port: profile.port,
+            keepalive,
         };
         tracing::info!(profile = profile_id, host = %params.host, port = params.port, "opening Telnet session");
-        return Ok(manager.open_telnet(params, size, sinks(on_data, on_event)));
+        return Ok(manager.open_telnet(params, size, automation, sinks(on_data, on_event)));
     }
     let secret = typed.or(saved);
     let auth = match profile.auth_method {
@@ -227,10 +255,58 @@ pub async fn session_open_profile(
         username: profile.username,
         auth,
         legacy: profile.legacy_mode,
+        keepalive,
     };
     tracing::info!(profile = profile_id, host = %params.host, port = params.port, "opening SSH session");
     let known_hosts = Arc::clone(&known_hosts);
-    Ok(manager.open_ssh(params, size, known_hosts, sinks(on_data, on_event)))
+    Ok(manager.open_ssh(
+        params,
+        size,
+        known_hosts,
+        automation,
+        sinks(on_data, on_event),
+    ))
+}
+
+/// Splits a multi-line text into lines; inner empty lines are kept (an empty
+/// line is a bare Enter, e.g. to answer `[confirm]`), trailing ones are not.
+fn sequence_lines(text: &str) -> Vec<String> {
+    text.trim_end_matches(['\r', '\n'])
+        .split('\n')
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect()
+}
+
+/// Types the lines of `text` one after the other, `delay_ms` apart (command bar
+/// buttons, sending to several sessions). Returns immediately: the session sends
+/// the lines in the background.
+#[tauri::command]
+pub async fn session_send_sequence(
+    manager: State<'_, SessionManager>,
+    id: SessionId,
+    text: String,
+    delay_ms: u32,
+) -> Result<(), AppError> {
+    if text.len() > MAX_SEQUENCE_BYTES || text.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "séquence vide ou trop longue (64 Kio maximum).".into(),
+        ));
+    }
+    if delay_ms > crate::persistence::buttons::MAX_DELAY_MS {
+        return Err(AppError::InvalidInput(
+            "délai : 60 secondes maximum.".into(),
+        ));
+    }
+    let lines = sequence_lines(&text);
+    if lines.len() > MAX_SEQUENCE_LINES {
+        return Err(AppError::InvalidInput(
+            "500 lignes maximum par envoi.".into(),
+        ));
+    }
+    let delay = Duration::from_millis(delay_ms.into());
+    manager
+        .send(id, SessionCommand::Sequence { lines, delay })
+        .await
 }
 
 #[tauri::command]
@@ -324,6 +400,19 @@ mod tests {
             }
             other => panic!("wrong auth method: {other:?}"),
         }
+    }
+
+    #[test]
+    fn sequence_lines_keep_inner_blank_lines() {
+        assert_eq!(
+            sequence_lines("conf t\r\nhostname R1\nend\n\n"),
+            ["conf t", "hostname R1", "end"]
+        );
+        assert_eq!(sequence_lines("reload\n\n"), ["reload"]);
+        assert_eq!(
+            sequence_lines("copy run start\n\ny"),
+            ["copy run start", "", "y"]
+        );
     }
 
     #[test]

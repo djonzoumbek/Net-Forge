@@ -25,9 +25,7 @@ use crate::security::known_hosts::{HostKeyMismatch, HostKeyStatus, KnownHosts};
 /// host key prompt is not counted).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(30);
-/// Detects dead connections (network cut) after about 3 x 15 s without answer.
-/// Will become configurable per profile in phase 5.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+/// Keepalives left unanswered before the connection is declared dead.
 const KEEPALIVE_MAX: usize = 3;
 
 pub enum SshAuth {
@@ -62,6 +60,9 @@ pub struct SshParams {
     pub auth: SshAuth,
     /// "Compatibility mode for old devices": also offer legacy algorithms.
     pub legacy: bool,
+    /// SSH keepalive interval; `None` disables it. Keeps idle sessions open
+    /// through firewalls/NAT and detects dead connections.
+    pub keepalive: Option<Duration>,
 }
 
 /// What the user needs to see to decide whether to trust an unknown server.
@@ -217,10 +218,10 @@ pub async fn connect(
     known_hosts: Arc<KnownHosts>,
     ask_host_key: HostKeyPrompt,
 ) -> Result<SshTransport, AppError> {
-    let tcp = net::open_tcp(&params.host, params.port).await?;
+    let tcp = net::open_tcp(&params.host, params.port, params.keepalive).await?;
 
     let config = Arc::new(client::Config {
-        keepalive_interval: Some(KEEPALIVE_INTERVAL),
+        keepalive_interval: params.keepalive,
         keepalive_max: KEEPALIVE_MAX,
         preferred: algorithms::preferred(params.legacy),
         ..Default::default()
@@ -503,7 +504,7 @@ impl Transport for SshTransport {
                         .ok()
                         .and_then(|r| r.clone())
                         .unwrap_or_else(|| "connexion interrompue".into());
-                    return TransportEvent::Closed(format!("Connexion perdue : {detail}."));
+                    return TransportEvent::Lost(format!("Connexion perdue : {detail}."));
                 }
             }
         }

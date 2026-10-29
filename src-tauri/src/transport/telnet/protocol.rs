@@ -13,6 +13,10 @@ const DO: u8 = 253;
 const WONT: u8 = 252;
 const WILL: u8 = 251;
 const SB: u8 = 250;
+const NOP_COMMAND: u8 = 241;
+
+/// "No operation": sent as keepalive, ignored by the device.
+pub const NOP: [u8; 2] = [IAC, NOP_COMMAND];
 const SE: u8 = 240;
 
 const OPT_ECHO: u8 = 1;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-buttons-list"
+description = "Enables the buttons_list command without any pre-configured scope."
+commands.allow = ["buttons_list"]
+
+[[permission]]
+identifier = "deny-buttons-list"
+description = "Denies the buttons_list command without any pre-configured scope."
+commands.deny = ["buttons_list"]

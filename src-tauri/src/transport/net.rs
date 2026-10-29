@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use socket2::{SockRef, TcpKeepalive};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -12,7 +13,15 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Resolves and connects, with distinct errors for unknown host, refused
 /// connection, unreachable network and timeout.
-pub async fn open_tcp(host: &str, port: u16) -> Result<TcpStream, AppError> {
+///
+/// `keepalive`: also enables the kernel's TCP keepalive, so a dead peer (network
+/// cut, device rebooted) is detected after about 4 × the interval even when no
+/// application data flows.
+pub async fn open_tcp(
+    host: &str,
+    port: u16,
+    keepalive: Option<Duration>,
+) -> Result<TcpStream, AppError> {
     // Resolving first lets us tell "unknown host name" apart from "host unreachable".
     let addrs: Vec<_> = timeout(DNS_TIMEOUT, tokio::net::lookup_host((host, port)))
         .await
@@ -48,6 +57,15 @@ pub async fn open_tcp(host: &str, port: u16) -> Result<TcpStream, AppError> {
     // Interactive traffic: send keystrokes immediately instead of batching them.
     if let Err(e) = tcp.set_nodelay(true) {
         tracing::debug!("set_nodelay failed: {e}");
+    }
+    if let Some(interval) = keepalive {
+        let params = TcpKeepalive::new()
+            .with_time(interval)
+            .with_interval(interval)
+            .with_retries(3);
+        if let Err(e) = SockRef::from(&tcp).set_tcp_keepalive(&params) {
+            tracing::warn!("TCP keepalive not enabled: {e}");
+        }
     }
     Ok(tcp)
 }

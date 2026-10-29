@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-button-delete"
+description = "Enables the button_delete command without any pre-configured scope."
+commands.allow = ["button_delete"]
+
+[[permission]]
+identifier = "deny-button-delete"
+description = "Denies the button_delete command without any pre-configured scope."
+commands.deny = ["button_delete"]

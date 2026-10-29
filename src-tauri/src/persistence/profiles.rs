@@ -88,6 +88,47 @@ pub struct Profile {
     /// A password (or key passphrase) is saved in the system keyring.
     pub has_saved_secret: bool,
     pub legacy_mode: bool,
+    #[serde(flatten)]
+    pub options: SessionOptions,
+}
+
+/// How a session of this profile behaves once connected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOptions {
+    /// Keepalive interval in seconds, 0 = disabled.
+    pub keepalive_secs: u32,
+    /// Reconnect when the connection is lost (never after a normal exit).
+    pub auto_reconnect: bool,
+    /// Answer `--More--`-like pager prompts with a space.
+    pub pager_auto_reply: bool,
+    /// One command per line, sent at the first prompt. Stored in clear.
+    pub login_commands: String,
+}
+
+impl SessionOptions {
+    pub fn login_command_lines(&self) -> Vec<String> {
+        self.login_commands
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn validate(&self) -> Result<(), AppError> {
+        if self.keepalive_secs > 3600 {
+            return Err(AppError::InvalidInput(
+                "keepalive : 3600 secondes maximum.".into(),
+            ));
+        }
+        if self.login_commands.len() > 4000 || self.login_commands.lines().count() > 50 {
+            return Err(AppError::InvalidInput(
+                "commandes de connexion : 50 lignes et 4000 caractères maximum.".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -118,6 +159,8 @@ pub struct ProfileInput {
     pub key_path: Option<String>,
     pub legacy_mode: bool,
     pub secret: SecretChange,
+    #[serde(flatten)]
+    pub options: SessionOptions,
 }
 
 impl ProfileInput {
@@ -143,6 +186,7 @@ impl ProfileInput {
         if self.username.len() > 255 {
             return invalid("nom d'utilisateur trop long.");
         }
+        self.options.validate()?;
         if self.protocol == Protocol::Telnet {
             // No SSH authentication, secret or algorithms: the device asks for its
             // credentials in the terminal.
@@ -178,7 +222,8 @@ impl ProfileInput {
 }
 
 const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
-     key_path, secret_ref, legacy_mode, protocol";
+     key_path, secret_ref, legacy_mode, protocol, keepalive_secs, auto_reconnect, \
+     pager_auto_reply, login_commands";
 
 /// Text columns parsed after the row is read (rusqlite closures cannot return
 /// `AppError`).
@@ -209,6 +254,12 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
         key_path: row.get(7)?,
         has_saved_secret: secret_ref.is_some(),
         legacy_mode: row.get(9)?,
+        options: SessionOptions {
+            keepalive_secs: row.get(11)?,
+            auto_reconnect: row.get(12)?,
+            pager_auto_reply: row.get(13)?,
+            login_commands: row.get(14)?,
+        },
     };
     Ok(RawRow {
         stored: StoredProfile {
@@ -330,6 +381,7 @@ pub fn create(
     )
     .map_err(db_error)?;
     let id = tx.last_insert_rowid();
+    write_options(&tx, id, &input.options)?;
     if let SecretChange::Set { value } = &input.secret {
         let account = profile_account(id);
         secrets.set(&account, value)?;
@@ -372,6 +424,7 @@ pub fn update(
         ],
     )
     .map_err(db_error)?;
+    write_options(&tx, id, &input.options)?;
     match &input.secret {
         SecretChange::Keep => {}
         SecretChange::Set { value } => {
@@ -396,6 +449,23 @@ pub fn update(
     }
     tx.commit().map_err(db_error)?;
     get(conn, id)
+}
+
+fn write_options(conn: &Connection, id: i64, options: &SessionOptions) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE profiles SET keepalive_secs = ?1, auto_reconnect = ?2, pager_auto_reply = ?3,
+             login_commands = ?4
+         WHERE id = ?5",
+        params![
+            options.keepalive_secs,
+            options.auto_reconnect,
+            options.pager_auto_reply,
+            options.login_commands,
+            id
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
 }
 
 /// Saves a secret typed at connection time (after a successful login).
@@ -503,6 +573,12 @@ mod tests {
             key_path: None,
             legacy_mode: false,
             secret,
+            options: SessionOptions {
+                keepalive_secs: 30,
+                auto_reconnect: false,
+                pager_auto_reply: false,
+                login_commands: String::new(),
+            },
         }
     }
 
@@ -606,6 +682,32 @@ mod tests {
             let mut ssh = input("R1 ssh", SecretChange::Keep);
             ssh.auth_method = AuthMethod::None;
             assert!(create(conn, secrets, ssh).is_err());
+            Ok(())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn session_options_are_saved_and_parsed() {
+        with_db(|conn, secrets| {
+            let mut i = input("R1", SecretChange::Keep);
+            i.options = SessionOptions {
+                keepalive_secs: 60,
+                auto_reconnect: true,
+                pager_auto_reply: true,
+                login_commands: "terminal length 0\n\n  \nshow clock  \n".into(),
+            };
+            let p = create(conn, secrets, i)?;
+            assert_eq!(p.options.keepalive_secs, 60);
+            assert!(p.options.auto_reconnect && p.options.pager_auto_reply);
+            assert_eq!(
+                p.options.login_command_lines(),
+                vec!["terminal length 0", "show clock"]
+            );
+
+            let mut too_long = input("R2", SecretChange::Keep);
+            too_long.options.keepalive_secs = 7200;
+            assert!(create(conn, secrets, too_long).is_err());
             Ok(())
         })
         .await;

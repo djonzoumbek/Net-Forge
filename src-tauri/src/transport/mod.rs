@@ -4,6 +4,8 @@
 //! the protocol. Connecting is transport-specific (each one has its own parameters)
 //! and therefore stays outside the trait.
 
+#[cfg(test)]
+pub mod idle_proxy;
 pub mod net;
 pub mod ssh;
 pub mod telnet;
@@ -51,8 +53,11 @@ pub enum TransportEvent {
     /// Raw bytes from the remote terminal. Not necessarily valid UTF-8:
     /// a multi-byte character may be split across two events.
     Data(Vec<u8>),
-    /// The remote side ended the session (shell exited, connection lost...).
+    /// The session ended normally (shell exited, device closed the connection).
     Closed(String),
+    /// The connection was lost (network cut, keepalive without answer, reset).
+    /// Auto-reconnect only reacts to this one, never to a normal exit.
+    Lost(String),
 }
 
 /// `-> impl Future + Send` instead of `async fn`: the session runner is spawned on

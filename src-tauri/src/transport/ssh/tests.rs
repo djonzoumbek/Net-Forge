@@ -43,6 +43,7 @@ fn params(auth: SshAuth) -> SshParams {
         username: USER.into(),
         auth,
         legacy: false,
+        keepalive: Some(Duration::from_secs(15)),
     }
 }
 
@@ -109,7 +110,9 @@ async fn read_until(t: &mut SshTransport, needle: &str, within: Duration) -> Str
         let remaining = deadline.saturating_duration_since(Instant::now());
         match timeout(remaining, t.recv()).await {
             Ok(TransportEvent::Data(d)) => out.extend_from_slice(&d),
-            Ok(TransportEvent::Closed(r)) => panic!("closed while waiting for {needle:?}: {r}"),
+            Ok(TransportEvent::Closed(r) | TransportEvent::Lost(r)) => {
+                panic!("closed while waiting for {needle:?}: {r}")
+            }
             Err(_) => panic!(
                 "timeout waiting for {needle:?}, got: {:?}",
                 String::from_utf8_lossy(&out)
@@ -256,7 +259,7 @@ async fn large_output_is_fully_received() {
                     break;
                 }
             }
-            TransportEvent::Closed(r) => panic!("closed: {r}"),
+            TransportEvent::Closed(r) | TransportEvent::Lost(r) => panic!("closed: {r}"),
         }
     }
     // 200 000 lines of "y\r\n" = 600 000 bytes, plus prompt and echo.
@@ -277,6 +280,7 @@ async fn remote_exit_is_detected() {
         {
             TransportEvent::Data(_) => continue,
             TransportEvent::Closed(reason) => break reason,
+            TransportEvent::Lost(reason) => panic!("normal exit reported as lost: {reason}"),
         }
     };
     assert!(closed.contains("code de sortie 3"), "{closed}");
@@ -348,10 +352,11 @@ async fn network_cut_is_detected_by_keepalive() {
     };
     docker("pause");
     let start = Instant::now();
-    let limit = KEEPALIVE_INTERVAL * (KEEPALIVE_MAX as u32 + 2);
+    // Test parameters use a 15 s keepalive (see `params`).
+    let limit = Duration::from_secs(15) * (KEEPALIVE_MAX as u32 + 2);
     let result = timeout(limit, async {
         loop {
-            if let TransportEvent::Closed(reason) = t.recv().await {
+            if let TransportEvent::Lost(reason) = t.recv().await {
                 return reason;
             }
         }

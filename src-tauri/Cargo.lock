@@ -2566,6 +2566,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "socket2",
  "tauri",
  "tauri-build",
  "thiserror 2.0.21",

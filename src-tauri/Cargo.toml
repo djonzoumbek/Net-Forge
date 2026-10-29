@@ -33,6 +33,7 @@ dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 hmac = "0.13"
 sha1 = "0.11"
 data-encoding = "2"
+socket2 = "0.6"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

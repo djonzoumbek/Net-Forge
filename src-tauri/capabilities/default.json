@@ -1,12 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core IPC + NetForge commands, nothing else",
+  "description": "Main window: core IPC, custom title bar (window moves/resizes) and NetForge commands",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
     "allow-session-open-ssh",
     "allow-session-open-profile",
     "allow-session-open-telnet",
@@ -23,6 +29,11 @@
     "allow-folder-create",
     "allow-folder-rename",
     "allow-folder-delete",
-    "allow-known-hosts-replace"
+    "allow-known-hosts-replace",
+    "allow-session-send-sequence",
+    "allow-buttons-list",
+    "allow-button-create",
+    "allow-button-update",
+    "allow-button-delete"
   ]
 }

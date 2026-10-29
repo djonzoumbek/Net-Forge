@@ -22,7 +22,9 @@ async fn read_until(t: &mut TelnetTransport, needle: &str, within: Duration) -> 
         let remaining = deadline.saturating_duration_since(Instant::now());
         match timeout(remaining, t.recv()).await {
             Ok(TransportEvent::Data(d)) => out.extend_from_slice(&d),
-            Ok(TransportEvent::Closed(r)) => panic!("closed while waiting for {needle:?}: {r}"),
+            Ok(TransportEvent::Closed(r) | TransportEvent::Lost(r)) => {
+                panic!("closed while waiting for {needle:?}: {r}")
+            }
             Err(_) => panic!(
                 "timeout waiting for {needle:?}, got: {:?}",
                 String::from_utf8_lossy(&out)
@@ -40,6 +42,7 @@ async fn login() -> TelnetTransport {
     let params = TelnetParams {
         host: "127.0.0.1".into(),
         port: port(),
+        keepalive: Some(Duration::from_secs(15)),
     };
     let mut t = connect(params, SIZE).await.expect("telnet connection");
     read_until(&mut t, "login:", Duration::from_secs(5)).await;
@@ -121,7 +124,7 @@ async fn large_output_and_remote_exit() {
                     break;
                 }
             }
-            TransportEvent::Closed(r) => panic!("closed: {r}"),
+            TransportEvent::Closed(r) | TransportEvent::Lost(r) => panic!("closed: {r}"),
         }
     }
     assert!(total >= 300_000, "received {total} bytes");
@@ -134,6 +137,7 @@ async fn large_output_and_remote_exit() {
         {
             TransportEvent::Data(_) => continue,
             TransportEvent::Closed(reason) => break reason,
+            TransportEvent::Lost(reason) => panic!("normal exit reported as lost: {reason}"),
         }
     };
     assert!(reason.contains("fermée par l'équipement"), "{reason}");
@@ -145,6 +149,7 @@ async fn refused_port_is_reported() {
     let params = TelnetParams {
         host: "127.0.0.1".into(),
         port: 1,
+        keepalive: Some(Duration::from_secs(15)),
     };
     let err = connect(params, SIZE).await.err().expect("must fail");
     assert_eq!(err.code(), "unreachable");

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-button-update"
+description = "Enables the button_update command without any pre-configured scope."
+commands.allow = ["button_update"]
+
+[[permission]]
+identifier = "deny-button-update"
+description = "Denies the button_update command without any pre-configured scope."
+commands.deny = ["button_update"]

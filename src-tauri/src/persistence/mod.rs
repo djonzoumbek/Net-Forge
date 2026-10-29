@@ -1,5 +1,6 @@
 //! SQLite storage (profiles, folders). Never contains secrets.
 
+pub mod buttons;
 pub mod profiles;
 
 use std::path::Path;
@@ -15,6 +16,7 @@ use crate::errors::AppError;
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_initial.sql"),
     include_str!("../../migrations/0002_telnet_profiles.sql"),
+    include_str!("../../migrations/0003_session_options_and_buttons.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between
@@ -29,6 +31,7 @@ impl Database {
     pub fn open(path: &Path) -> Result<Self, AppError> {
         let conn = Connection::open(path).map_err(db_error)?;
         restrict_permissions(path);
+        backup_before_migration(&conn, path)?;
         Self::init(conn)
     }
 
@@ -62,6 +65,28 @@ impl Database {
         .await
         .map_err(|e| AppError::Storage(format!("tâche interrompue : {e}")))?
     }
+}
+
+/// Copies an existing database before upgrading it: `netforge.db.backup-v2` is the
+/// state before migrating from version 2. `VACUUM INTO` writes a consistent
+/// snapshot, WAL journal included.
+fn backup_before_migration(conn: &Connection, path: &Path) -> Result<(), AppError> {
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(db_error)?;
+    if version == 0 || version as usize >= MIGRATIONS.len() {
+        return Ok(()); // new database, or nothing to migrate
+    }
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(format!(".backup-v{version}"));
+    let backup = std::path::PathBuf::from(backup);
+    // VACUUM INTO refuses to overwrite: an older backup of the same version goes.
+    let _ = std::fs::remove_file(&backup);
+    conn.execute("VACUUM INTO ?1", [backup.to_string_lossy()])
+        .map_err(|e| AppError::Storage(format!("sauvegarde avant migration impossible : {e}")))?;
+    restrict_permissions(&backup);
+    tracing::info!(backup = %backup.display(), "database backed up before migration");
+    Ok(())
 }
 
 fn migrate(conn: &mut Connection) -> Result<(), AppError> {
@@ -112,6 +137,46 @@ mod tests {
         assert_eq!(version as usize, MIGRATIONS.len());
         // Running again is a no-op.
         migrate(&mut conn).unwrap();
+    }
+
+    #[test]
+    fn existing_database_is_backed_up_before_migration() {
+        let dir = std::env::temp_dir().join(format!("netforge-backup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("netforge.db");
+        let _ = std::fs::remove_file(&path);
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO profiles (name, host, port, username, auth_method) VALUES ('R1', 'h', 22, 'u', 'password')",
+                [],
+            )
+            .unwrap();
+            let _ = &mut conn;
+        }
+        Database::open(&path).unwrap();
+        let backup = Connection::open(dir.join("netforge.db.backup-v1")).unwrap();
+        let version: u32 = backup
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        let name: String = backup
+            .query_row("SELECT name FROM profiles", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            (version, name.as_str()),
+            (1, "R1"),
+            "backup holds the pre-migration state"
+        );
+        // Opening an up-to-date database creates no new backup.
+        std::fs::remove_file(dir.join("netforge.db.backup-v1")).unwrap();
+        Database::open(&path).unwrap();
+        assert!(
+            !dir.join(format!("netforge.db.backup-v{}", MIGRATIONS.len()))
+                .exists()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A database created by the previous version keeps its data when upgraded.

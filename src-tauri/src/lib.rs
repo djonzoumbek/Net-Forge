@@ -57,6 +57,7 @@ pub fn run() {
             commands::sessions::session_open_profile,
             commands::sessions::session_open_telnet,
             commands::sessions::session_write,
+            commands::sessions::session_send_sequence,
             commands::sessions::session_resize,
             commands::sessions::session_ack,
             commands::sessions::session_close,
@@ -70,6 +71,10 @@ pub fn run() {
             commands::profiles::folder_rename,
             commands::profiles::folder_delete,
             commands::known_hosts::known_hosts_replace,
+            commands::buttons::buttons_list,
+            commands::buttons::button_create,
+            commands::buttons::button_update,
+            commands::buttons::button_delete,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {
