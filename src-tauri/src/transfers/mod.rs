@@ -364,7 +364,11 @@ impl TransferManager {
         let future = job(cancel, Arc::clone(&sink));
         let manager = self.clone();
         tauri::async_runtime::spawn(async move {
-            let outcome = future.await;
+            // Own task, like sessions: a panic ends this transfer only, and is
+            // still reported as a failure.
+            let outcome = tauri::async_runtime::spawn(future)
+                .await
+                .unwrap_or_else(|e| Err(AppError::Sftp(format!("erreur interne ({e})."))));
             manager.running().remove(&id);
             let event = match outcome {
                 Ok(bytes) => TransferEvent::Done { bytes },

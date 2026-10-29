@@ -1,8 +1,8 @@
 [package]
 name = "netforge"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "NetForge: SSH, Telnet, serial and SFTP client for network administration"
+authors = ["Kamis Djonzoumbé"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -45,7 +45,8 @@ tauri-plugin-dialog = "2"
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# No `panic = "abort"`: with unwinding, a panic in one session's task is caught
+# by tokio and ends that session only, instead of killing the whole application.
 strip = true
 
 [dev-dependencies]

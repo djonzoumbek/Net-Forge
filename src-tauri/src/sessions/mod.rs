@@ -181,9 +181,31 @@ impl SessionManager {
         let sinks = Arc::new(sinks);
         tauri::async_runtime::spawn(async move {
             tracing::info!(session = id, "session task started");
-            manager
-                .drive(id, sinks, initial_size, automation, connect, commands_rx)
-                .await;
+            // The session runs in a task of its own: if it panics (a bug), tokio
+            // catches the panic in that task only, and the cleanup below still
+            // runs. The other sessions and the application are not affected.
+            let (inner_manager, inner_sinks) = (manager.clone(), Arc::clone(&sinks));
+            let session = tauri::async_runtime::spawn(async move {
+                inner_manager
+                    .drive(
+                        id,
+                        inner_sinks,
+                        initial_size,
+                        automation,
+                        connect,
+                        commands_rx,
+                    )
+                    .await;
+            });
+            if let Err(e) = session.await {
+                tracing::error!(session = id, "session task panicked: {e}");
+                (sinks.event)(SessionEvent::Closed {
+                    reason: "Erreur interne : la session s'est arrêtée (détails dans les logs)."
+                        .into(),
+                    by_remote: false,
+                    lost: false,
+                });
+            }
             manager.sessions().remove(&id);
             // Everything the session owned (transport, socket, channels, buffers)
             // has been dropped at this point.
@@ -448,6 +470,26 @@ mod tests {
         assert!(matches!(
             manager.send(id, SessionCommand::Close).await,
             Err(AppError::SessionNotFound(_))
+        ));
+    }
+
+    /// A bug (panic) in one session ends that session only, and the UI is told.
+    #[tokio::test]
+    async fn a_panicking_session_is_reported_and_released() {
+        let manager = SessionManager::default();
+        let (sinks, events) = recording_sinks();
+        manager.spawn_session(sinks, SIZE, Automation::default(), |_| async {
+            if true {
+                panic!("simulated bug in a transport");
+            }
+            Ok(IdleTransport {
+                closed: Arc::default(),
+            })
+        });
+        wait_until(|| manager.len() == 0).await;
+        assert!(matches!(
+            events.lock().unwrap().last(),
+            Some(SessionEvent::Closed { reason, .. }) if reason.contains("Erreur interne")
         ));
     }
 
