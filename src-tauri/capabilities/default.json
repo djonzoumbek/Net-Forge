@@ -1,10 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Main window: core IPC + the session commands, nothing else",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "allow-session-open-ssh",
+    "allow-session-write",
+    "allow-session-resize",
+    "allow-session-ack",
+    "allow-session-close",
+    "allow-session-answer-host-key"
   ]
 }
