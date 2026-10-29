@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "netforge",
+  "productName": "NetForge",
   "version": "0.1.0",
   "identifier": "dev.kamis.netforge",
   "build": {
@@ -12,13 +12,16 @@
   "app": {
     "windows": [
       {
-        "title": "netforge",
-        "width": 800,
-        "height": 600
+        "title": "NetForge",
+        "width": 1100,
+        "height": 700,
+        "minWidth": 480,
+        "minHeight": 320
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
     }
   },
   "bundle": {

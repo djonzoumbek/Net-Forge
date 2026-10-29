@@ -1,0 +1,278 @@
+:root {
+  --bg: #0b1016;
+  --panel: #151c25;
+  --panel-border: #263241;
+  --text: #d7dde4;
+  --muted: #8a96a3;
+  --accent: #f2b134;
+  --accent-text: #1a1206;
+  --danger: #e5675e;
+  --ok: #8cc27a;
+  font-family: "Ubuntu", "Cantarell", "DejaVu Sans", sans-serif;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The app always fills the window; the terminal takes the remaining space. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Connection form ---------- */
+
+.form-view {
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 16px;
+}
+
+.connect-form {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+
+.connect-form h1 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field span,
+.auth-choice legend {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.field-row {
+  display: flex;
+  gap: 10px;
+}
+
+.field.grow {
+  flex: 1;
+}
+
+.field.port {
+  width: 90px;
+}
+
+input:not([type="radio"]) {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.auth-choice {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.auth-choice label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+button {
+  padding: 7px 14px;
+  font: inherit;
+  color: var(--text);
+  background: #222c38;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #2a3645;
+}
+
+button.primary {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: #f7c25a;
+}
+
+.form-error {
+  margin: 0;
+  padding: 8px 10px;
+  color: #ffd2cf;
+  background: #3a1d1b;
+  border: 1px solid #6b2f2a;
+  border-radius: 6px;
+}
+
+/* ---------- Session view ---------- */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+  white-space: nowrap;
+}
+
+.session-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-text {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-dot.connected {
+  background: var(--ok);
+}
+
+.status-dot.connecting,
+.status-dot.hostKey {
+  background: var(--accent);
+}
+
+.status-dot.closed {
+  background: var(--danger);
+}
+
+.banner {
+  padding: 6px 12px;
+  background: #1d2733;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.banner.warning {
+  background: #3a2a12;
+  color: #ffe0a8;
+}
+
+/* min-height: 0 lets the flex child shrink, otherwise xterm cannot get smaller. */
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 6px;
+  background: #0f141a;
+}
+
+/* ---------- Dialog ---------- */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 560px;
+  padding: 20px 22px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+
+.dialog h2 {
+  margin-top: 0;
+  font-size: 1.15rem;
+}
+
+.fingerprint {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.fingerprint dt {
+  color: var(--muted);
+}
+
+.fingerprint dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+code {
+  font-family: "DejaVu Sans Mono", "Ubuntu Mono", monospace;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
