@@ -24,21 +24,42 @@ export function toAppError(error: unknown): AppError {
   return { code: "unknown", message: String(error) };
 }
 
-export async function openSsh(
-  request: SshConnectRequest,
+/**
+ * Opens a session. Common shape for every way of connecting, so the terminal does
+ * not need to know whether it is a quick connection or a saved profile.
+ */
+export type SessionOpener = (
   size: TermSize,
   onData: (bytes: Uint8Array) => void,
   onEvent: (event: SessionEvent) => void,
-): Promise<SessionId> {
-  // One pair of channels per session: output can never reach another tab.
-  const dataChannel = new Channel<unknown>((message) => onData(toBytes(message)));
-  const eventChannel = new Channel<SessionEvent>(onEvent);
-  return invoke<SessionId>("session_open_ssh", {
-    request,
-    size,
-    onData: dataChannel,
-    onEvent: eventChannel,
-  });
+) => Promise<SessionId>;
+
+// One pair of channels per session: output can never reach another tab.
+function channels(onData: (bytes: Uint8Array) => void, onEvent: (event: SessionEvent) => void) {
+  return {
+    onData: new Channel<unknown>((message) => onData(toBytes(message))),
+    onEvent: new Channel<SessionEvent>(onEvent),
+  };
+}
+
+export function sshOpener(request: SshConnectRequest): SessionOpener {
+  return (size, onData, onEvent) =>
+    invoke<SessionId>("session_open_ssh", { request, size, ...channels(onData, onEvent) });
+}
+
+/** `secret`: password/passphrase typed by the user when none is saved. */
+export function profileOpener(profileId: number, secret?: string): SessionOpener {
+  return (size, onData, onEvent) =>
+    invoke<SessionId>("session_open_profile", {
+      profileId,
+      secret: secret ?? null,
+      size,
+      ...channels(onData, onEvent),
+    });
+}
+
+export function replaceHostKey(host: string, port: number, fingerprint: string): Promise<void> {
+  return invoke("known_hosts_replace", { host, port, fingerprint });
 }
 
 export function writeToSession(id: SessionId, data: Uint8Array): Promise<void> {

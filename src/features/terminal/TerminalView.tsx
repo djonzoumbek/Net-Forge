@@ -5,17 +5,18 @@ import "@xterm/xterm/css/xterm.css";
 import {
   ackSession,
   closeSession,
-  openSsh,
   resizeSession,
   toAppError,
   writeToSession,
+  type SessionOpener,
 } from "../../services/sessionService";
-import type { SessionEvent, SessionId, SshConnectRequest } from "../../types/session";
+import type { SessionEvent, SessionId } from "../../types/session";
 import { createAckBatcher, createInputQueue } from "./flowControl";
 import { terminalTheme } from "./theme";
 
 interface TerminalViewProps {
-  request: SshConnectRequest;
+  /** Must keep the same identity for the life of the session (it is a dependency). */
+  open: SessionOpener;
   onEvent: (event: SessionEvent) => void;
   onSessionId: (id: SessionId) => void;
 }
@@ -24,7 +25,7 @@ interface TerminalViewProps {
  * Owns one xterm.js instance and the backend session behind it: the session is
  * opened on mount and closed on unmount.
  */
-export function TerminalView({ request, onEvent, onSessionId }: TerminalViewProps) {
+export function TerminalView({ open, onEvent, onSessionId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Callbacks change on every parent render; keeping them in refs avoids
   // reopening the session each time.
@@ -63,8 +64,7 @@ export function TerminalView({ request, onEvent, onSessionId }: TerminalViewProp
     );
 
     const initialSize = { cols: term.cols, rows: term.rows };
-    openSsh(
-      request,
+    open(
       initialSize,
       // xterm decodes UTF-8 itself, including characters split across chunks.
       (bytes) => term.write(bytes, () => acks.add(bytes.length)),
@@ -141,7 +141,7 @@ export function TerminalView({ request, onEvent, onSessionId }: TerminalViewProp
       if (sessionId !== null) void closeSession(sessionId).catch(() => {});
       term.dispose();
     };
-  }, [request]);
+  }, [open]);
 
   return <div className="terminal-host" ref={containerRef} />;
 }

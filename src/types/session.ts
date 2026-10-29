@@ -9,13 +9,16 @@ export interface TermSize {
 
 export type AuthRequest =
   | { method: "password"; password: string }
-  | { method: "keyFile"; path: string; passphrase?: string };
+  | { method: "keyFile"; path: string; passphrase?: string }
+  | { method: "agent" };
 
 export interface SshConnectRequest {
   host: string;
   port: number;
   username: string;
   auth: AuthRequest;
+  /** Compatibility mode: also offer legacy algorithms (old Cisco/Huawei). */
+  legacy?: boolean;
 }
 
 export interface HostKeyInfo {
@@ -26,9 +29,36 @@ export interface HostKeyInfo {
   fingerprint: string;
 }
 
+/** Recorded key differs from the one presented by the server. */
+export interface HostKeyMismatch {
+  host: string;
+  port: number;
+  algorithm: string;
+  oldFingerprint: string;
+  newFingerprint: string;
+  file: string;
+  line: number;
+}
+
+export interface NegotiatedAlgorithms {
+  kex: string;
+  hostKey: string;
+  cipher: string;
+  mac: string;
+  /** Legacy algorithms among the negotiated ones (empty: all modern). */
+  legacy: string[];
+}
+
+export interface ConnectionInfo {
+  protocol: string;
+  encrypted: boolean;
+  algorithms: NegotiatedAlgorithms | null;
+}
+
 export type SessionEvent =
   | { type: "hostKeyPrompt"; info: HostKeyInfo }
-  | { type: "connected" }
+  | { type: "hostKeyChanged"; mismatch: HostKeyMismatch }
+  | { type: "connected"; info: ConnectionInfo }
   | { type: "failed"; code: string; message: string }
   | { type: "closed"; reason: string; byRemote: boolean };
 

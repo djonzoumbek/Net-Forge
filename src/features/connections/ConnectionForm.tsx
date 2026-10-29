@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import type { SshConnectRequest } from "../../types/session";
 
-type AuthMethod = "password" | "keyFile";
+type AuthMethod = "password" | "keyFile" | "agent";
 
 export interface ConnectionDraft {
   host: string;
@@ -9,6 +9,7 @@ export interface ConnectionDraft {
   username: string;
   method: AuthMethod;
   keyPath: string;
+  legacy: boolean;
 }
 
 export const emptyDraft: ConnectionDraft = {
@@ -17,6 +18,7 @@ export const emptyDraft: ConnectionDraft = {
   username: "",
   method: "password",
   keyPath: "~/.ssh/id_ed25519",
+  legacy: false,
 };
 
 interface ConnectionFormProps {
@@ -33,7 +35,7 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
   const [passphrase, setPassphrase] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
 
-  const update = (field: keyof ConnectionDraft) => (value: string) =>
+  const update = (field: Exclude<keyof ConnectionDraft, "legacy">) => (value: string) =>
     setDraft((d) => ({ ...d, [field]: value }));
 
   function handleSubmit(event: FormEvent) {
@@ -55,7 +57,10 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
         auth:
           draft.method === "password"
             ? { method: "password", password }
-            : { method: "keyFile", path: draft.keyPath.trim(), passphrase },
+            : draft.method === "keyFile"
+              ? { method: "keyFile", path: draft.keyPath.trim(), passphrase }
+              : { method: "agent" },
+        legacy: draft.legacy,
       },
       draft,
     );
@@ -67,7 +72,8 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
 
   return (
     <form className="connect-form" onSubmit={handleSubmit}>
-      <h1>Nouvelle connexion SSH</h1>
+      <h1>Connexion rapide</h1>
+      <p className="hint">Sans enregistrer de profil. Pour une connexion réutilisable, crée un profil.</p>
 
       {message && (
         <p className="form-error" role="alert">
@@ -125,6 +131,14 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
           />
           Clé privée
         </label>
+        <label>
+          <input
+            type="radio"
+            checked={draft.method === "agent"}
+            onChange={() => update("method")("agent")}
+          />
+          Agent SSH
+        </label>
       </fieldset>
 
       {draft.method === "password" ? (
@@ -137,7 +151,7 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
             autoComplete="off"
           />
         </label>
-      ) : (
+      ) : draft.method === "keyFile" ? (
         <>
           <label className="field">
             <span>Fichier de clé privée</span>
@@ -157,7 +171,16 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
             />
           </label>
         </>
-      )}
+      ) : null}
+
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={draft.legacy}
+          onChange={(e) => setDraft((d) => ({ ...d, legacy: e.target.checked }))}
+        />
+        Mode compatibilité équipements anciens
+      </label>
 
       <button type="submit" className="primary">
         Se connecter

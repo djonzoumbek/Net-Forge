@@ -27,20 +27,157 @@ body,
   overflow: hidden;
 }
 
+/* Sidebar (profiles) + workspace (quick connect or session). */
 .app {
   height: 100%;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
 }
 
-/* ---------- Connection form ---------- */
+.app.sidebar-hidden {
+  grid-template-columns: 1fr;
+}
 
-.form-view {
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.home {
+  position: relative;
+  flex: 1;
+  display: flex;
   align-items: center;
   justify-content: center;
   overflow: auto;
   padding: 16px;
 }
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--panel-border);
+}
+
+.sidebar-header {
+  padding: 12px 12px 6px;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.sidebar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.sidebar-actions button {
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+
+.sidebar-empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sidebar .form-error {
+  margin: 8px 12px;
+}
+
+.tree,
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree {
+  flex: 1;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.tree ul {
+  padding-left: 14px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+}
+
+.tree-row:hover,
+.tree-row:focus-within {
+  background: #1d2733;
+}
+
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-label:hover {
+  background: none;
+}
+
+.tree-row.folder .tree-label {
+  font-weight: 600;
+}
+
+.chevron {
+  width: 10px;
+  color: var(--muted);
+}
+
+/* Row actions appear on hover / keyboard focus to keep the tree readable. */
+.row-actions {
+  display: none;
+  gap: 2px;
+}
+
+.tree-row:hover .row-actions,
+.tree-row:focus-within .row-actions {
+  display: flex;
+}
+
+.row-actions button {
+  padding: 1px 6px;
+  font-size: 0.8rem;
+  background: none;
+  border-color: transparent;
+}
+
+.row-actions button:hover {
+  border-color: var(--panel-border);
+}
+
+/* ---------- Connection form ---------- */
 
 .connect-form {
   width: 100%;
@@ -86,7 +223,8 @@ body,
   width: 90px;
 }
 
-input:not([type="radio"]) {
+input:not([type="radio"], [type="checkbox"]),
+select {
   width: 100%;
   padding: 8px 10px;
   font: inherit;
@@ -139,6 +277,79 @@ button.primary {
 
 button.primary:hover {
   background: #f7c25a;
+}
+
+button.danger {
+  color: #fff;
+  background: #a83a33;
+  border-color: #a83a33;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.link {
+  margin-left: 10px;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  border: none;
+  text-decoration: underline;
+}
+
+.icon-button {
+  padding: 2px 8px;
+}
+
+.icon-button.floating {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.warning-text {
+  color: #ffd98a;
+}
+
+.danger-text {
+  color: #ff8a80;
+}
+
+.badge {
+  padding: 1px 7px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge.secure {
+  color: #c8f0b8;
+  background: #20361c;
+}
+
+.badge.legacy {
+  color: #1a1206;
+  background: var(--accent);
+}
+
+.badge.danger {
+  color: #fff;
+  background: #a83a33;
 }
 
 .form-error {
@@ -231,16 +442,36 @@ button.primary:hover {
 
 .dialog {
   width: 100%;
-  max-width: 560px;
+  max-width: 480px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   padding: 20px 22px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
 }
 
+.dialog.wide {
+  max-width: 620px;
+}
+
+.dialog.danger {
+  border-color: #a83a33;
+}
+
+.dialog.danger h2 {
+  color: #ff8a80;
+}
+
 .dialog h2 {
   margin-top: 0;
   font-size: 1.15rem;
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .fingerprint {
@@ -275,4 +506,15 @@ code {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* Long algorithm lists must not push the buttons out of the status bar. */
+.status-bar .badge.legacy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-label {
+  min-width: 0;
 }
