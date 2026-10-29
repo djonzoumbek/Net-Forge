@@ -5,15 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
-use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 use crate::errors::AppError;
 use crate::persistence::Database;
-use crate::persistence::profiles::{self, AuthMethod, Protocol};
+use crate::persistence::profiles::{self, AuthMethod, LogMode, Protocol};
+use crate::persistence::settings;
 use crate::security::known_hosts::KnownHosts;
 use crate::security::secrets::Secrets;
+use crate::sessions::logger::LogConfig;
 use crate::sessions::{
     Automation, SessionCommand, SessionEvent, SessionId, SessionManager, SessionSinks,
 };
@@ -198,11 +200,26 @@ pub fn session_open_telnet(
     ))
 }
 
+/// Session logs directory: the one chosen in the settings, or
+/// `~/Documents/NetForge/logs` (visible, unlike the hidden app data directory).
+fn log_dir(app: &AppHandle, configured: &str) -> PathBuf {
+    if !configured.is_empty() {
+        return PathBuf::from(configured);
+    }
+    app.path()
+        .document_dir()
+        .or_else(|_| app.path().home_dir())
+        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .join("NetForge")
+        .join("logs")
+}
+
 /// Connects with a saved profile. `secret` is the password / passphrase typed by
 /// the user when none is saved (or to override the saved one).
 #[allow(clippy::too_many_arguments)] // Tauri injects states and channels as arguments.
 #[tauri::command]
 pub async fn session_open_profile(
+    app: AppHandle,
     manager: State<'_, SessionManager>,
     known_hosts: State<'_, Arc<KnownHosts>>,
     db: State<'_, Database>,
@@ -217,14 +234,26 @@ pub async fn session_open_profile(
     let typed = secret.filter(|s| !s.is_empty()).map(Zeroizing::new);
     let secrets = Arc::clone(&secrets);
     // Reading the keyring may block (D-Bus): done on the blocking pool with the DB.
-    let (profile, saved) = db
-        .run(move |conn| profiles::get_with_secret(conn, &secrets, profile_id))
+    let (profile, saved, app_settings) = db
+        .run(move |conn| {
+            let (profile, saved) = profiles::get_with_secret(conn, &secrets, profile_id)?;
+            Ok((profile, saved, settings::get(conn)?))
+        })
         .await?;
     let keepalive = (profile.options.keepalive_secs > 0)
         .then(|| Duration::from_secs(profile.options.keepalive_secs.into()));
+    let log = match profile.options.session_log {
+        LogMode::Off => None,
+        mode => Some(LogConfig {
+            mode,
+            dir: log_dir(&app, &app_settings.log_dir),
+            title: format!("{} ({}:{})", profile.name, profile.host, profile.port),
+        }),
+    };
     let automation = Automation {
         pager_auto_reply: profile.options.pager_auto_reply,
         login_commands: profile.options.login_command_lines(),
+        log,
     };
     if profile.protocol == Protocol::Telnet {
         let params = TelnetParams {

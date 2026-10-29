@@ -82,3 +82,23 @@ pub async fn folder_rename(db: State<'_, Database>, id: i64, name: String) -> Re
 pub async fn folder_delete(db: State<'_, Database>, id: i64) -> Result<(), AppError> {
     db.run(move |conn| profiles::delete_folder(conn, id)).await
 }
+
+#[tauri::command]
+pub async fn profile_move(
+    db: State<'_, Database>,
+    id: i64,
+    folder_id: Option<i64>,
+) -> Result<(), AppError> {
+    db.run(move |conn| profiles::move_profile(conn, id, folder_id))
+        .await
+}
+
+#[tauri::command]
+pub async fn folder_move(
+    db: State<'_, Database>,
+    id: i64,
+    parent_id: Option<i64>,
+) -> Result<(), AppError> {
+    db.run(move |conn| profiles::move_folder(conn, id, parent_id))
+        .await
+}

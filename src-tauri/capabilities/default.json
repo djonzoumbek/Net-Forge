@@ -29,11 +29,15 @@
     "allow-folder-create",
     "allow-folder-rename",
     "allow-folder-delete",
+    "allow-profile-move",
+    "allow-folder-move",
     "allow-known-hosts-replace",
     "allow-session-send-sequence",
     "allow-buttons-list",
     "allow-button-create",
     "allow-button-update",
-    "allow-button-delete"
+    "allow-button-delete",
+    "allow-settings-get",
+    "allow-settings-update"
   ]
 }

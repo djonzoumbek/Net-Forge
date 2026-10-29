@@ -419,6 +419,7 @@ async fn pager_is_answered_and_login_commands_run_at_first_prompt() {
     let automation = Automation {
         pager_auto_reply: true,
         login_commands: vec!["echo LOGIN-$((40+4))".into()],
+        log: None,
     };
     // busybox `more` shows "--More--" on a 24-line terminal: 5000 lines need ~200 answers.
     for telnet in [false, true] {
@@ -438,4 +439,79 @@ async fn pager_is_answered_and_login_commands_run_at_first_prompt() {
             "the pager really paused ({pages} times), telnet: {telnet}"
         );
     }
+}
+
+// ---------- Phase 6: session log ----------
+
+/// Criterion: "the log file is readable and has no stray escape sequences
+/// (plain text option)", with colours, a pager and its erasures.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn text_session_log_is_clean_and_readable() {
+    use crate::persistence::profiles::LogMode;
+    use crate::sessions::logger::LogConfig;
+
+    let dir = std::env::temp_dir().join(format!("netforge-session-log-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let automation = Automation {
+        pager_auto_reply: true,
+        login_commands: vec![],
+        log: Some(LogConfig {
+            mode: LogMode::Text,
+            dir: dir.clone(),
+            title: "test-server".into(),
+        }),
+    };
+    let mut s = {
+        let known_hosts = fresh_known_hosts("log");
+        single(|m, sinks| m.open_ssh(ssh_params(2222, None), SIZE, known_hosts, automation, sinks))
+    };
+    let log_file = match s.next_event(Duration::from_secs(20)).await {
+        Some(SessionEvent::Connected {
+            log_file: Some(path),
+            ..
+        }) => path,
+        other => panic!("expected Connected with a log file, got {other:?}"),
+    };
+    s.write("ls --color=always /etc | head -3; printf '\\033[1;31mrouge\\033[0m\\n'; more big.txt; echo FIN-$((40+6))\r")
+        .await;
+    s.wait_output("FIN-46", Duration::from_secs(20)).await;
+    s.manager.send(s.id, SessionCommand::Close).await.unwrap();
+    while s.manager.len() > 0 {
+        sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut content = String::new();
+    for _ in 0..200 {
+        content = std::fs::read_to_string(&log_file).unwrap_or_default();
+        if content.contains("# Fin de session") {
+            break;
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        content.starts_with("# NetForge — test-server — début"),
+        "{content}"
+    );
+    assert!(
+        content.contains("\nrouge\n"),
+        "coloured text kept as plain text"
+    );
+    assert!(
+        content.contains("ligne numéro 5000\n"),
+        "whole file paged through"
+    );
+    assert!(
+        !content.contains("--More--"),
+        "erased pager prompts must not remain in the text log"
+    );
+    assert!(content.contains("FIN-46"));
+    let control = content
+        .chars()
+        .find(|c| c.is_control() && *c != '\n' && *c != '\t');
+    assert_eq!(
+        control, None,
+        "no escape sequence or control character in the text log"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }

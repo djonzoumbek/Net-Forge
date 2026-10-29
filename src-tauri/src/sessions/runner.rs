@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
 use super::automation::{OutputWatcher, Reaction};
+use super::logger::{LogConfig, SessionLogger};
 use super::{SessionCommand, SessionEvent, SessionId, SessionSinks};
 use crate::transport::{Transport, TransportEvent};
 
@@ -23,13 +24,15 @@ pub(crate) const MAX_UNACKED: usize = 1024 * 1024;
 /// Pause between login commands: lets slow devices print their prompt.
 const LOGIN_COMMAND_DELAY: Duration = Duration::from_millis(300);
 
-/// Automatic behaviours configured per profile.
+/// Automatic behaviours and recording configured per profile.
 #[derive(Debug, Clone, Default)]
 pub struct Automation {
     /// Answer `--More--`-like pager prompts with a space.
     pub pager_auto_reply: bool,
     /// Sent once, when the first prompt appears (e.g. `terminal length 0`).
     pub login_commands: Vec<String>,
+    /// Record the session output in a file.
+    pub log: Option<LogConfig>,
 }
 
 /// Lines waiting to be sent: each one after its own delay.
@@ -69,6 +72,7 @@ pub(crate) async fn run_session<T: Transport>(
     mut commands: mpsc::Receiver<SessionCommand>,
     sinks: &SessionSinks,
     automation: Automation,
+    mut logger: Option<SessionLogger>,
 ) {
     let mut batch: Vec<u8> = Vec::new();
     let mut flush_at: Option<Instant> = None;
@@ -123,6 +127,9 @@ pub(crate) async fn run_session<T: Transport>(
 
             event = transport.recv(), if can_read => match event {
                 TransportEvent::Data(data) => {
+                    if let Some(logger) = &mut logger {
+                        logger.write(&data);
+                    }
                     match watcher.observe(&data) {
                         Some(Reaction::PagerContinue) => {
                             if let Err(e) = transport.send(b" ").await {
@@ -246,7 +253,7 @@ mod tests {
             event: Box::new(move |e| ev.lock().unwrap().push(e)),
         };
         let task = tokio::spawn(async move {
-            run_session(1, transport, commands_rx, &sinks, automation).await
+            run_session(1, transport, commands_rx, &sinks, automation, None).await
         });
         Harness {
             remote,
@@ -429,6 +436,7 @@ mod tests {
         let h = start_with(Automation {
             pager_auto_reply: true,
             login_commands: vec!["terminal length 0".into(), "show clock".into()],
+            log: None,
         });
         h.remote
             .send(TransportEvent::Data(b"\r\nR1>".to_vec()))

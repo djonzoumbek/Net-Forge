@@ -1,6 +1,7 @@
 //! Session manager: creates sessions, routes commands to them, tracks their lifetime.
 
 mod automation;
+pub mod logger;
 mod runner;
 
 pub use runner::Automation;
@@ -49,6 +50,10 @@ pub enum SessionEvent {
     },
     Connected {
         info: ConnectionInfo,
+        /// Session log file, when recording is enabled.
+        log_file: Option<String>,
+        /// Recording was requested but could not start (the session works anyway).
+        log_error: Option<String>,
     },
     /// The server key differs from the recorded one: connection blocked.
     HostKeyChanged {
@@ -251,8 +256,34 @@ impl SessionManager {
             .map(|a| a.legacy.join(","))
             .unwrap_or_default();
         tracing::info!(session = id, legacy = %legacy, "connected");
-        (sinks.event)(SessionEvent::Connected { info });
-        runner::run_session(id, transport, commands, &sinks, automation).await;
+
+        // Recording starts once connected: failed attempts leave no empty files.
+        let (logger, log_file, log_error) = match automation.log.clone() {
+            None => (None, None, None),
+            // Creating the file is disk I/O: done on the blocking pool.
+            Some(config) => {
+                let started =
+                    tokio::task::spawn_blocking(move || logger::SessionLogger::start(&config))
+                        .await
+                        .unwrap_or_else(|e| Err(AppError::Storage(e.to_string())));
+                match started {
+                    Ok(logger) => {
+                        let path = logger.path().display().to_string();
+                        (Some(logger), Some(path), None)
+                    }
+                    Err(e) => {
+                        tracing::warn!(session = id, "session log not started: {e}");
+                        (None, None, Some(e.to_string()))
+                    }
+                }
+            }
+        };
+        (sinks.event)(SessionEvent::Connected {
+            info,
+            log_file,
+            log_error,
+        });
+        runner::run_session(id, transport, commands, &sinks, automation, logger).await;
     }
 
     pub async fn send(&self, id: SessionId, command: SessionCommand) -> Result<(), AppError> {

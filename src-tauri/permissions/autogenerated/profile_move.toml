@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-profile-move"
+description = "Enables the profile_move command without any pre-configured scope."
+commands.allow = ["profile_move"]
+
+[[permission]]
+identifier = "deny-profile-move"
+description = "Denies the profile_move command without any pre-configured scope."
+commands.deny = ["profile_move"]

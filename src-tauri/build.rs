@@ -15,12 +15,16 @@ const COMMANDS: &[&str] = &[
     "folder_create",
     "folder_rename",
     "folder_delete",
+    "profile_move",
+    "folder_move",
     "known_hosts_replace",
     "session_send_sequence",
     "buttons_list",
     "button_create",
     "button_update",
     "button_delete",
+    "settings_get",
+    "settings_update",
 ];
 
 fn main() {

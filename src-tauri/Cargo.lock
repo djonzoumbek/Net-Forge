@@ -2557,6 +2557,7 @@ dependencies = [
 name = "netforge"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "data-encoding",
  "dbus-secret-service-keyring-store",
  "hmac 0.13.0",

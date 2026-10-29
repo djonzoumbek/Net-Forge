@@ -70,11 +70,15 @@ pub fn run() {
             commands::profiles::folder_create,
             commands::profiles::folder_rename,
             commands::profiles::folder_delete,
+            commands::profiles::profile_move,
+            commands::profiles::folder_move,
             commands::known_hosts::known_hosts_replace,
             commands::buttons::buttons_list,
             commands::buttons::button_create,
             commands::buttons::button_update,
             commands::buttons::button_delete,
+            commands::settings::settings_get,
+            commands::settings::settings_update,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

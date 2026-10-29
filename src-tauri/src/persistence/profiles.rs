@@ -92,6 +92,40 @@ pub struct Profile {
     pub options: SessionOptions,
 }
 
+/// Session recording to a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LogMode {
+    Off,
+    /// Plain text: escape sequences removed, readable in any editor.
+    Text,
+    /// Exact bytes received, replayable with `cat`.
+    Raw,
+}
+
+impl LogMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            LogMode::Off => "off",
+            LogMode::Text => "text",
+            LogMode::Raw => "raw",
+        }
+    }
+
+    fn parse(s: &str) -> rusqlite::Result<Self> {
+        match s {
+            "off" => Ok(LogMode::Off),
+            "text" => Ok(LogMode::Text),
+            "raw" => Ok(LogMode::Raw),
+            other => Err(rusqlite::Error::InvalidColumnType(
+                15,
+                format!("session_log={other}"),
+                rusqlite::types::Type::Text,
+            )),
+        }
+    }
+}
+
 /// How a session of this profile behaves once connected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +138,8 @@ pub struct SessionOptions {
     pub pager_auto_reply: bool,
     /// One command per line, sent at the first prompt. Stored in clear.
     pub login_commands: String,
+    /// Record the session in a file (may contain secrets typed in the terminal).
+    pub session_log: LogMode,
 }
 
 impl SessionOptions {
@@ -223,7 +259,7 @@ impl ProfileInput {
 
 const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
      key_path, secret_ref, legacy_mode, protocol, keepalive_secs, auto_reconnect, \
-     pager_auto_reply, login_commands";
+     pager_auto_reply, login_commands, session_log";
 
 /// Text columns parsed after the row is read (rusqlite closures cannot return
 /// `AppError`).
@@ -259,6 +295,7 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
             auto_reconnect: row.get(12)?,
             pager_auto_reply: row.get(13)?,
             login_commands: row.get(14)?,
+            session_log: LogMode::parse(&row.get::<_, String>(15)?)?,
         },
     };
     Ok(RawRow {
@@ -454,13 +491,14 @@ pub fn update(
 fn write_options(conn: &Connection, id: i64, options: &SessionOptions) -> Result<(), AppError> {
     conn.execute(
         "UPDATE profiles SET keepalive_secs = ?1, auto_reconnect = ?2, pager_auto_reply = ?3,
-             login_commands = ?4
-         WHERE id = ?5",
+             login_commands = ?4, session_log = ?5
+         WHERE id = ?6",
         params![
             options.keepalive_secs,
             options.auto_reconnect,
             options.pager_auto_reply,
             options.login_commands,
+            options.session_log.as_str(),
             id
         ],
     )
@@ -549,6 +587,59 @@ pub fn rename_folder(conn: &Connection, id: i64, name: &str) -> Result<(), AppEr
     Ok(())
 }
 
+/// Moves a profile to a folder (`None`: root). Only `folder_id` changes: the
+/// rest of the profile, and its keyring entry, are left untouched.
+pub fn move_profile(conn: &Connection, id: i64, folder_id: Option<i64>) -> Result<(), AppError> {
+    check_folder(conn, folder_id)?;
+    let changed = conn
+        .execute(
+            "UPDATE profiles SET folder_id = ?1 WHERE id = ?2",
+            params![folder_id, id],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(AppError::NotFound(format!("profil {id}")));
+    }
+    Ok(())
+}
+
+/// Moves a folder (with its content) under `parent_id` (`None`: root).
+pub fn move_folder(conn: &Connection, id: i64, parent_id: Option<i64>) -> Result<(), AppError> {
+    check_folder(conn, parent_id)?;
+    if let Some(parent) = parent_id {
+        // The new parent must not be the folder itself or one of its sub-folders:
+        // that would detach a loop of folders from the tree.
+        let inside: bool = conn
+            .query_row(
+                "WITH RECURSIVE subtree(id) AS (
+                     SELECT ?1
+                     UNION ALL
+                     SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+                 )
+                 SELECT EXISTS(SELECT 1 FROM subtree WHERE id = ?2)",
+                params![id, parent],
+                |r| r.get(0),
+            )
+            .map_err(db_error)?;
+        if inside {
+            return Err(AppError::InvalidInput(
+                "un dossier ne peut pas être déplacé dans lui-même ni dans un de ses sous-dossiers."
+                    .into(),
+            ));
+        }
+    }
+    let changed = conn
+        .execute(
+            "UPDATE folders SET parent_id = ?1 WHERE id = ?2",
+            params![parent_id, id],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(AppError::NotFound(format!("dossier {id}")));
+    }
+    Ok(())
+}
+
 /// Sub-folders are deleted; profiles inside are moved to the root (see migration).
 pub fn delete_folder(conn: &Connection, id: i64) -> Result<(), AppError> {
     conn.execute("DELETE FROM folders WHERE id = ?1", params![id])
@@ -578,6 +669,7 @@ mod tests {
                 auto_reconnect: false,
                 pager_auto_reply: false,
                 login_commands: String::new(),
+                session_log: LogMode::Off,
             },
         }
     }
@@ -643,6 +735,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profiles_and_folders_can_be_moved_without_loops() {
+        with_db(|conn, secrets| {
+            let lab = create_folder(conn, "Labo", None)?;
+            let core = create_folder(conn, "Cœur", Some(lab.id))?;
+            let other = create_folder(conn, "Prod", None)?;
+            let p = create(
+                conn,
+                secrets,
+                input("R1", SecretChange::Set { value: "pw".into() }),
+            )?;
+
+            move_profile(conn, p.id, Some(core.id))?;
+            let moved = get(conn, p.id)?;
+            assert_eq!(moved.folder_id, Some(core.id));
+            assert!(moved.has_saved_secret, "moving keeps the saved secret");
+            move_profile(conn, p.id, None)?;
+            assert_eq!(get(conn, p.id)?.folder_id, None);
+            assert!(move_profile(conn, p.id, Some(9999)).is_err());
+            assert!(move_profile(conn, 9999, None).is_err());
+
+            move_folder(conn, lab.id, Some(other.id))?;
+            move_folder(conn, core.id, None)?;
+            // Into itself, or into its own sub-folder: refused.
+            assert!(move_folder(conn, other.id, Some(other.id)).is_err());
+            assert!(move_folder(conn, other.id, Some(lab.id)).is_err());
+            let parents: Vec<_> = list(conn)?
+                .folders
+                .into_iter()
+                .map(|f| (f.name, f.parent_id))
+                .collect();
+            assert!(parents.contains(&("Labo".into(), Some(other.id))));
+            assert!(parents.contains(&("Cœur".into(), None)));
+            assert!(parents.contains(&("Prod".into(), None)));
+            Ok(())
+        })
+        .await;
+    }
+
+    #[tokio::test]
     async fn deleting_a_folder_keeps_its_profiles() {
         with_db(|conn, secrets| {
             let lab = create_folder(conn, "Lab", None)?;
@@ -696,10 +827,12 @@ mod tests {
                 auto_reconnect: true,
                 pager_auto_reply: true,
                 login_commands: "terminal length 0\n\n  \nshow clock  \n".into(),
+                session_log: LogMode::Text,
             };
             let p = create(conn, secrets, i)?;
             assert_eq!(p.options.keepalive_secs, 60);
             assert!(p.options.auto_reconnect && p.options.pager_auto_reply);
+            assert_eq!(p.options.session_log, LogMode::Text);
             assert_eq!(
                 p.options.login_command_lines(),
                 vec!["terminal length 0", "show clock"]

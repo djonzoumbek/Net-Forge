@@ -2,6 +2,7 @@
 
 pub mod buttons;
 pub mod profiles;
+pub mod settings;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_initial.sql"),
     include_str!("../../migrations/0002_telnet_profiles.sql"),
     include_str!("../../migrations/0003_session_options_and_buttons.sql"),
+    include_str!("../../migrations/0004_session_logs_and_settings.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between

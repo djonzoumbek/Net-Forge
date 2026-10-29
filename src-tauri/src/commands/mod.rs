@@ -5,3 +5,4 @@ pub mod buttons;
 pub mod known_hosts;
 pub mod profiles;
 pub mod sessions;
+pub mod settings;
