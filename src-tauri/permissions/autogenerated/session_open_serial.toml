@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-session-open-serial"
+description = "Enables the session_open_serial command without any pre-configured scope."
+commands.allow = ["session_open_serial"]
+
+[[permission]]
+identifier = "deny-session-open-serial"
+description = "Denies the session_open_serial command without any pre-configured scope."
+commands.deny = ["session_open_serial"]

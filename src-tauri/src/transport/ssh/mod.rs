@@ -202,8 +202,31 @@ impl client::Handler for ClientHandler {
     }
 }
 
+/// Lets file transfers open their own channel on the session's SSH connection
+/// (no second login, no second host key check). Cloning it only clones an `Arc`.
+#[derive(Clone)]
+pub struct SshLink(Arc<client::Handle<ClientHandler>>);
+
+impl SshLink {
+    /// Opens an SFTP subsystem channel. Fails if the server has no SFTP (many
+    /// network devices only offer SCP, or nothing).
+    pub async fn open_sftp(&self) -> Result<russh_sftp::client::SftpSession, AppError> {
+        let channel = self.0.channel_open_session().await?;
+        channel.request_subsystem(true, "sftp").await?;
+        russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| {
+                AppError::Sftp(format!(
+                    "le serveur ne propose pas SFTP sur cette connexion ({e})."
+                ))
+            })
+    }
+}
+
 pub struct SshTransport {
-    handle: client::Handle<ClientHandler>,
+    // `Arc`: shared with `SshLink` (file transfers). The connection itself is
+    // closed explicitly by `close`, whoever still holds a clone.
+    handle: Arc<client::Handle<ClientHandler>>,
     channel: russh::Channel<client::Msg>,
     exit_status: Option<u32>,
     disconnect_reason: Arc<Mutex<Option<String>>>,
@@ -285,7 +308,7 @@ pub async fn connect(
     channel.request_shell(false).await?;
 
     Ok(SshTransport {
-        handle,
+        handle: Arc::new(handle),
         channel,
         exit_status: None,
         disconnect_reason,
@@ -461,6 +484,10 @@ async fn load_private_key(
 }
 
 impl Transport for SshTransport {
+    fn sftp_link(&self) -> Option<SshLink> {
+        Some(SshLink(Arc::clone(&self.handle)))
+    }
+
     fn info(&self) -> ConnectionInfo {
         let negotiated = self
             .negotiated

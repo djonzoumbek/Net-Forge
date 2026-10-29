@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 use super::db_error;
 use crate::errors::AppError;
 use crate::security::secrets::{Secrets, profile_account};
+use crate::transport::serial::{FlowControl, Parity, SerialSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Protocol {
     Ssh,
     Telnet,
+    /// `host` is the device path (/dev/ttyUSB0), `port` is 0.
+    Serial,
 }
 
 impl Protocol {
@@ -19,6 +22,7 @@ impl Protocol {
         match self {
             Protocol::Ssh => "ssh",
             Protocol::Telnet => "telnet",
+            Protocol::Serial => "serial",
         }
     }
 
@@ -26,6 +30,7 @@ impl Protocol {
         match s {
             "ssh" => Ok(Protocol::Ssh),
             "telnet" => Ok(Protocol::Telnet),
+            "serial" => Ok(Protocol::Serial),
             other => Err(AppError::Storage(format!("protocole inconnu : {other}"))),
         }
     }
@@ -88,6 +93,8 @@ pub struct Profile {
     /// A password (or key passphrase) is saved in the system keyring.
     pub has_saved_secret: bool,
     pub legacy_mode: bool,
+    /// Line settings (serial profiles; defaults elsewhere).
+    pub serial: SerialSettings,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -195,6 +202,8 @@ pub struct ProfileInput {
     pub key_path: Option<String>,
     pub legacy_mode: bool,
     pub secret: SecretChange,
+    #[serde(default)]
+    pub serial: SerialSettings,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -212,6 +221,27 @@ impl ProfileInput {
         if self.name.is_empty() || self.name.len() > 100 {
             return invalid("le nom du profil est obligatoire (100 caractères max).");
         }
+        if self.username.len() > 255 {
+            return invalid("nom d'utilisateur trop long.");
+        }
+        self.options.validate()?;
+        if self.protocol == Protocol::Serial {
+            if !self.host.starts_with("/dev/") || self.host.len() > 255 {
+                return invalid("port série invalide (ex. /dev/ttyUSB0).");
+            }
+            self.serial = self.serial.validate()?;
+            // A local cable: no network port, no authentication, no keepalive or
+            // reconnection (the line has no notion of a lost connection to retry).
+            self.port = 0;
+            self.username.clear();
+            self.auth_method = AuthMethod::None;
+            self.key_path = None;
+            self.legacy_mode = false;
+            self.secret = SecretChange::Clear;
+            self.options.keepalive_secs = 0;
+            self.options.auto_reconnect = false;
+            return Ok(self);
+        }
         if self.host.is_empty() || self.host.len() > 255 || self.host.contains(char::is_whitespace)
         {
             return invalid("nom d'hôte invalide.");
@@ -219,10 +249,8 @@ impl ProfileInput {
         if self.port == 0 {
             return invalid("le port doit être entre 1 et 65535.");
         }
-        if self.username.len() > 255 {
-            return invalid("nom d'utilisateur trop long.");
-        }
-        self.options.validate()?;
+        // Line settings only matter for serial profiles.
+        self.serial = SerialSettings::default();
         if self.protocol == Protocol::Telnet {
             // No SSH authentication, secret or algorithms: the device asks for its
             // credentials in the terminal.
@@ -259,7 +287,8 @@ impl ProfileInput {
 
 const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
      key_path, secret_ref, legacy_mode, protocol, keepalive_secs, auto_reconnect, \
-     pager_auto_reply, login_commands, session_log";
+     pager_auto_reply, login_commands, session_log, serial_baud_rate, serial_data_bits, \
+     serial_parity, serial_stop_bits, serial_flow_control";
 
 /// Text columns parsed after the row is read (rusqlite closures cannot return
 /// `AppError`).
@@ -290,6 +319,13 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
         key_path: row.get(7)?,
         has_saved_secret: secret_ref.is_some(),
         legacy_mode: row.get(9)?,
+        serial: SerialSettings {
+            baud_rate: row.get(16)?,
+            data_bits: row.get(17)?,
+            parity: parse_parity(&row.get::<_, String>(18)?)?,
+            stop_bits: row.get(19)?,
+            flow_control: parse_flow(&row.get::<_, String>(20)?)?,
+        },
         options: SessionOptions {
             keepalive_secs: row.get(11)?,
             auto_reconnect: row.get(12)?,
@@ -306,6 +342,44 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
         auth_method: row.get(6)?,
         protocol: row.get(10)?,
     })
+}
+
+fn column_error(index: usize, value: &str) -> rusqlite::Error {
+    rusqlite::Error::InvalidColumnType(index, value.into(), rusqlite::types::Type::Text)
+}
+
+fn parity_str(parity: Parity) -> &'static str {
+    match parity {
+        Parity::None => "none",
+        Parity::Odd => "odd",
+        Parity::Even => "even",
+    }
+}
+
+fn parse_parity(s: &str) -> rusqlite::Result<Parity> {
+    match s {
+        "none" => Ok(Parity::None),
+        "odd" => Ok(Parity::Odd),
+        "even" => Ok(Parity::Even),
+        other => Err(column_error(18, other)),
+    }
+}
+
+fn flow_str(flow: FlowControl) -> &'static str {
+    match flow {
+        FlowControl::None => "none",
+        FlowControl::Software => "software",
+        FlowControl::Hardware => "hardware",
+    }
+}
+
+fn parse_flow(s: &str) -> rusqlite::Result<FlowControl> {
+    match s {
+        "none" => Ok(FlowControl::None),
+        "software" => Ok(FlowControl::Software),
+        "hardware" => Ok(FlowControl::Hardware),
+        other => Err(column_error(20, other)),
+    }
 }
 
 fn finish(row: RawRow) -> Result<StoredProfile, AppError> {
@@ -419,6 +493,7 @@ pub fn create(
     .map_err(db_error)?;
     let id = tx.last_insert_rowid();
     write_options(&tx, id, &input.options)?;
+    write_serial(&tx, id, &input.serial)?;
     if let SecretChange::Set { value } = &input.secret {
         let account = profile_account(id);
         secrets.set(&account, value)?;
@@ -462,6 +537,7 @@ pub fn update(
     )
     .map_err(db_error)?;
     write_options(&tx, id, &input.options)?;
+    write_serial(&tx, id, &input.serial)?;
     match &input.secret {
         SecretChange::Keep => {}
         SecretChange::Set { value } => {
@@ -499,6 +575,24 @@ fn write_options(conn: &Connection, id: i64, options: &SessionOptions) -> Result
             options.pager_auto_reply,
             options.login_commands,
             options.session_log.as_str(),
+            id
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+fn write_serial(conn: &Connection, id: i64, serial: &SerialSettings) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE profiles SET serial_baud_rate = ?1, serial_data_bits = ?2, serial_parity = ?3,
+             serial_stop_bits = ?4, serial_flow_control = ?5
+         WHERE id = ?6",
+        params![
+            serial.baud_rate,
+            serial.data_bits,
+            parity_str(serial.parity),
+            serial.stop_bits,
+            flow_str(serial.flow_control),
             id
         ],
     )
@@ -664,6 +758,7 @@ mod tests {
             key_path: None,
             legacy_mode: false,
             secret,
+            serial: SerialSettings::default(),
             options: SessionOptions {
                 keepalive_secs: 30,
                 auto_reconnect: false,
@@ -729,6 +824,51 @@ mod tests {
             let p = update(conn, secrets, p.id, agent)?;
             assert!(!p.has_saved_secret);
             assert!(secrets.get(&profile_account(p.id))?.is_none());
+            Ok(())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn serial_profile_keeps_line_settings_and_drops_network_fields() {
+        with_db(|conn, secrets| {
+            let mut console = input("R1 console", SecretChange::Set { value: "pw".into() });
+            console.protocol = Protocol::Serial;
+            console.host = "/dev/ttyUSB0".into();
+            console.options.auto_reconnect = true;
+            console.serial = SerialSettings {
+                baud_rate: 115_200,
+                data_bits: 7,
+                parity: Parity::Even,
+                stop_bits: 2,
+                flow_control: FlowControl::Hardware,
+            };
+            let p = create(conn, secrets, console)?;
+            assert_eq!(p.protocol, Protocol::Serial);
+            assert_eq!((p.host.as_str(), p.port), ("/dev/ttyUSB0", 0));
+            assert_eq!(p.auth_method, AuthMethod::None);
+            assert!(!p.has_saved_secret, "no secret for a serial console");
+            assert!(!p.options.auto_reconnect);
+            assert_eq!(p.serial.baud_rate, 115_200);
+            assert_eq!(p.serial.parity, Parity::Even);
+            assert_eq!(p.serial.flow_control, FlowControl::Hardware);
+
+            let mut bad = input("x", SecretChange::Keep);
+            bad.protocol = Protocol::Serial;
+            bad.host = "10.0.0.1".into();
+            assert!(create(conn, secrets, bad).is_err(), "not a device path");
+            let mut bad = input("x", SecretChange::Keep);
+            bad.protocol = Protocol::Serial;
+            bad.host = "/dev/ttyS0".into();
+            bad.serial.data_bits = 9;
+            assert!(create(conn, secrets, bad).is_err());
+
+            // Back to SSH: line settings reset, a network port is required again.
+            let mut ssh = input("R1 console", SecretChange::Keep);
+            ssh.serial.baud_rate = 115_200;
+            let p = update(conn, secrets, p.id, ssh)?;
+            assert_eq!(p.serial, SerialSettings::default());
+            assert_eq!(p.port, 22);
             Ok(())
         })
         .await;

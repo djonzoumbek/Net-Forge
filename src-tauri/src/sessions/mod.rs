@@ -11,12 +11,14 @@ use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use russh_sftp::client::SftpSession;
 use serde::Serialize;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OnceCell, mpsc, oneshot};
 
 use crate::errors::AppError;
 use crate::security::known_hosts::{HostKeyMismatch, KnownHosts};
-use crate::transport::ssh::{self, HostKeyInfo, HostKeyPrompt, SshParams};
+use crate::transport::serial::{self, SerialParams};
+use crate::transport::ssh::{self, HostKeyInfo, HostKeyPrompt, SshLink, SshParams};
 use crate::transport::telnet::{self, TelnetParams};
 use crate::transport::{ConnectionInfo, TermSize, Transport};
 
@@ -83,6 +85,11 @@ pub struct SessionSinks {
 struct SessionEntry {
     commands: mpsc::Sender<SessionCommand>,
     pending_host_key: Option<oneshot::Sender<bool>>,
+    /// SSH sessions, once connected: the connection used by SFTP.
+    ssh_link: Option<SshLink>,
+    /// SFTP channel, opened on first use and shared by every transfer of the
+    /// session. Dropped with the entry when the session ends.
+    sftp: Arc<OnceCell<Arc<SftpSession>>>,
 }
 
 /// Shared by every Tauri command through `tauri::State`.
@@ -133,6 +140,17 @@ impl SessionManager {
         })
     }
 
+    pub fn open_serial(
+        &self,
+        params: SerialParams,
+        size: TermSize,
+        automation: Automation,
+        sinks: SessionSinks,
+    ) -> SessionId {
+        // No host key either: a local cable.
+        self.spawn_session(sinks, size, automation, move |_ask| serial::connect(params))
+    }
+
     /// Generic over the connection step so that tests can use a fake transport.
     fn spawn_session<T, F>(
         &self,
@@ -154,6 +172,8 @@ impl SessionManager {
             SessionEntry {
                 commands: commands_tx,
                 pending_host_key: None,
+                ssh_link: None,
+                sftp: Arc::new(OnceCell::new()),
             },
         );
 
@@ -250,6 +270,11 @@ impl SessionManager {
             tracing::warn!(session = id, "resize failed: {e}");
         }
         let info = transport.info();
+        if let Some(link) = transport.sftp_link()
+            && let Some(entry) = self.sessions().get_mut(&id)
+        {
+            entry.ssh_link = Some(link);
+        }
         let legacy = info
             .algorithms
             .as_ref()
@@ -297,6 +322,29 @@ impl SessionManager {
             .send(command)
             .await
             .map_err(|_| AppError::SessionNotFound(id))
+    }
+
+    /// The session's SFTP channel, opened on the first call. Only for connected
+    /// SSH sessions.
+    pub async fn sftp(&self, id: SessionId) -> Result<Arc<SftpSession>, AppError> {
+        // Take what we need and release the map lock before any `.await`.
+        let (link, cell) = {
+            let sessions = self.sessions();
+            let entry = sessions.get(&id).ok_or(AppError::SessionNotFound(id))?;
+            let link = entry.ssh_link.clone().ok_or_else(|| {
+                AppError::Sftp("disponible uniquement sur une session SSH connectée.".into())
+            })?;
+            (link, Arc::clone(&entry.sftp))
+        };
+        // `OnceCell`: two simultaneous first calls open a single channel.
+        let sftp = cell
+            .get_or_try_init(|| async {
+                let sftp = link.open_sftp().await?;
+                tracing::info!(session = id, "sftp channel opened");
+                Ok::<_, AppError>(Arc::new(sftp))
+            })
+            .await?;
+        Ok(Arc::clone(sftp))
     }
 
     pub fn answer_host_key(&self, id: SessionId, accept: bool) -> Result<(), AppError> {

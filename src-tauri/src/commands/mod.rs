@@ -6,3 +6,4 @@ pub mod known_hosts;
 pub mod profiles;
 pub mod sessions;
 pub mod settings;
+pub mod transfers;

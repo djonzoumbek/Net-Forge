@@ -19,6 +19,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0002_telnet_profiles.sql"),
     include_str!("../../migrations/0003_session_options_and_buttons.sql"),
     include_str!("../../migrations/0004_session_logs_and_settings.sql"),
+    include_str!("../../migrations/0005_serial_profiles.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between
@@ -226,5 +227,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!(folder, None);
+    }
+
+    /// 0005 rebuilds `profiles`: every phase 5 / 6 option must survive.
+    #[test]
+    fn upgrade_from_version_4_keeps_session_options() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        for (version, sql) in MIGRATIONS[..4].iter().enumerate() {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", version as i64 + 1)
+                .unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO profiles (name, protocol, host, port, username, auth_method, keepalive_secs,
+                                   auto_reconnect, pager_auto_reply, login_commands, session_log)
+             VALUES ('R1', 'telnet', '10.0.0.1', 5001, '', 'none', 60, 1, 1, 'terminal length 0', 'raw');",
+        )
+        .unwrap();
+
+        migrate(&mut conn).unwrap();
+
+        let row: (i64, bool, bool, String, String, i64, String) = conn
+            .query_row(
+                "SELECT keepalive_secs, auto_reconnect, pager_auto_reply, login_commands, session_log,
+                        serial_baud_rate, serial_parity
+                 FROM profiles WHERE name = 'R1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                60,
+                true,
+                true,
+                "terminal length 0".into(),
+                "raw".into(),
+                9600,
+                "none".into()
+            )
+        );
+        // Serial profiles have port 0; network profiles still cannot.
+        conn.execute(
+            "INSERT INTO profiles (name, protocol, host, port, username, auth_method)
+             VALUES ('console', 'serial', '/dev/ttyUSB0', 0, '', 'none')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO profiles (name, protocol, host, port, username, auth_method)
+                 VALUES ('bad', 'ssh', 'h', 0, 'u', 'password')",
+                [],
+            )
+            .is_err()
+        );
     }
 }

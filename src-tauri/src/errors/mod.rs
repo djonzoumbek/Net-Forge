@@ -77,6 +77,26 @@ pub enum AppError {
 
     #[error("Erreur SSH : {0}")]
     Ssh(String),
+
+    #[error("Transfert de fichiers (SFTP) : {0}")]
+    Sftp(String),
+
+    #[error("Fichier local : {0}")]
+    LocalFile(String),
+
+    /// Upload refused to replace a file: the UI offers "Replace".
+    #[error("{0} existe déjà sur le serveur.")]
+    RemoteExists(String),
+
+    #[error("Transfert annulé.")]
+    Cancelled,
+
+    #[error("Port série : {0}")]
+    Serial(String),
+
+    /// The message explains the `dialout` group fix for this machine.
+    #[error("Accès au port série refusé. {0}")]
+    SerialPermission(String),
 }
 
 impl AppError {
@@ -101,6 +121,12 @@ impl AppError {
             AppError::Storage(_) => "storage",
             AppError::Keyring(_) => "keyring",
             AppError::Ssh(_) => "ssh",
+            AppError::Sftp(_) => "sftp",
+            AppError::LocalFile(_) => "local_file",
+            AppError::RemoteExists(_) => "remote_exists",
+            AppError::Cancelled => "cancelled",
+            AppError::Serial(_) => "serial",
+            AppError::SerialPermission(_) => "serial_permission",
         }
     }
 }
@@ -136,6 +162,30 @@ impl From<russh::Error> for AppError {
             E::Keys(k) => AppError::PrivateKey(k.to_string()),
             other => AppError::Ssh(other.to_string()),
         }
+    }
+}
+
+impl From<russh_sftp::client::error::Error> for AppError {
+    fn from(err: russh_sftp::client::error::Error) -> Self {
+        use russh_sftp::client::error::Error as E;
+        use russh_sftp::protocol::StatusCode as S;
+        AppError::Sftp(match err {
+            E::Status(status) => match status.status_code {
+                S::NoSuchFile => "fichier ou dossier introuvable sur le serveur.".into(),
+                S::PermissionDenied => "permission refusée par le serveur.".into(),
+                S::Failure if !status.error_message.is_empty() => {
+                    format!(
+                        "le serveur a refusé l'opération ({}).",
+                        status.error_message
+                    )
+                }
+                S::NoConnection | S::ConnectionLost => "la connexion SSH a été perdue.".into(),
+                S::OpUnsupported => "opération non prise en charge par ce serveur.".into(),
+                code => format!("{code} ({}).", status.error_message),
+            },
+            E::Timeout => "le serveur ne répond plus.".into(),
+            other => other.to_string(),
+        })
     }
 }
 

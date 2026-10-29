@@ -20,6 +20,7 @@ use crate::sessions::{
     Automation, SessionCommand, SessionEvent, SessionId, SessionManager, SessionSinks,
 };
 use crate::transport::TermSize;
+use crate::transport::serial::{self, SerialParams, SerialPortEntry, SerialSettings};
 use crate::transport::ssh::{SshAuth, SshParams};
 use crate::transport::telnet::TelnetParams;
 
@@ -200,6 +201,45 @@ pub fn session_open_telnet(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerialConnectRequest {
+    device: String,
+    settings: SerialSettings,
+}
+
+/// Quick serial connection (console cable). The port and line settings are
+/// validated when the port is opened.
+#[tauri::command]
+pub fn session_open_serial(
+    manager: State<'_, SessionManager>,
+    request: SerialConnectRequest,
+    size: TermSize,
+    on_data: Channel<InvokeResponseBody>,
+    on_event: Channel<SessionEvent>,
+) -> Result<SessionId, AppError> {
+    let size = size.validate()?;
+    let params = SerialParams {
+        device: request.device,
+        settings: request.settings.validate()?,
+    };
+    tracing::info!(device = %params.device, "opening serial session");
+    Ok(manager.open_serial(
+        params,
+        size,
+        Automation::default(),
+        sinks(on_data, on_event),
+    ))
+}
+
+/// Serial ports present on the machine (udev is blocking: done on the blocking pool).
+#[tauri::command]
+pub async fn serial_ports() -> Result<Vec<SerialPortEntry>, AppError> {
+    tokio::task::spawn_blocking(serial::list_ports)
+        .await
+        .map_err(|e| AppError::Serial(e.to_string()))?
+}
+
 /// Session logs directory: the one chosen in the settings, or
 /// `~/Documents/NetForge/logs` (visible, unlike the hidden app data directory).
 fn log_dir(app: &AppHandle, configured: &str) -> PathBuf {
@@ -247,7 +287,11 @@ pub async fn session_open_profile(
         mode => Some(LogConfig {
             mode,
             dir: log_dir(&app, &app_settings.log_dir),
-            title: format!("{} ({}:{})", profile.name, profile.host, profile.port),
+            title: if profile.protocol == Protocol::Serial {
+                format!("{} ({})", profile.name, profile.host)
+            } else {
+                format!("{} ({}:{})", profile.name, profile.host, profile.port)
+            },
         }),
     };
     let automation = Automation {
@@ -255,6 +299,14 @@ pub async fn session_open_profile(
         login_commands: profile.options.login_command_lines(),
         log,
     };
+    if profile.protocol == Protocol::Serial {
+        let params = SerialParams {
+            device: profile.host,
+            settings: profile.serial,
+        };
+        tracing::info!(profile = profile_id, device = %params.device, "opening serial session");
+        return Ok(manager.open_serial(params, size, automation, sinks(on_data, on_event)));
+    }
     if profile.protocol == Protocol::Telnet {
         let params = TelnetParams {
             host: profile.host,

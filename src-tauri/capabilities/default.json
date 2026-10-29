@@ -16,6 +16,8 @@
     "allow-session-open-ssh",
     "allow-session-open-profile",
     "allow-session-open-telnet",
+    "allow-session-open-serial",
+    "allow-serial-ports",
     "allow-session-write",
     "allow-session-resize",
     "allow-session-ack",
@@ -38,6 +40,13 @@
     "allow-button-update",
     "allow-button-delete",
     "allow-settings-get",
-    "allow-settings-update"
+    "allow-settings-update",
+    "allow-sftp-list",
+    "allow-sftp-mkdir",
+    "allow-sftp-download",
+    "allow-sftp-upload",
+    "allow-transfer-cancel",
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

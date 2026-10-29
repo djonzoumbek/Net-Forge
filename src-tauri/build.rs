@@ -7,6 +7,8 @@ const COMMANDS: &[&str] = &[
     "session_answer_host_key",
     "session_open_profile",
     "session_open_telnet",
+    "session_open_serial",
+    "serial_ports",
     "library_list",
     "profile_create",
     "profile_update",
@@ -25,6 +27,11 @@ const COMMANDS: &[&str] = &[
     "button_delete",
     "settings_get",
     "settings_update",
+    "sftp_list",
+    "sftp_mkdir",
+    "sftp_download",
+    "sftp_upload",
+    "transfer_cancel",
 ];
 
 fn main() {

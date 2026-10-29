@@ -3,6 +3,7 @@ mod errors;
 mod persistence;
 mod security;
 mod sessions;
+mod transfers;
 mod transport;
 
 use std::path::PathBuf;
@@ -44,6 +45,7 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::new(known_hosts));
     app.manage(Arc::new(Secrets::system()));
     app.manage(SessionManager::default());
+    app.manage(transfers::TransferManager::default());
     Ok(())
 }
 
@@ -51,11 +53,15 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 pub fn run() {
     init_logging();
     let result = tauri::Builder::default()
+        // Native open/save dialogs (SFTP: file to upload, where to save a download).
+        .plugin(tauri_plugin_dialog::init())
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             commands::sessions::session_open_ssh,
             commands::sessions::session_open_profile,
             commands::sessions::session_open_telnet,
+            commands::sessions::session_open_serial,
+            commands::sessions::serial_ports,
             commands::sessions::session_write,
             commands::sessions::session_send_sequence,
             commands::sessions::session_resize,
@@ -79,6 +85,11 @@ pub fn run() {
             commands::buttons::button_delete,
             commands::settings::settings_get,
             commands::settings::settings_update,
+            commands::transfers::sftp_list,
+            commands::transfers::sftp_mkdir,
+            commands::transfers::sftp_download,
+            commands::transfers::sftp_upload,
+            commands::transfers::transfer_cancel,
         ])
         .run(tauri::generate_context!());
     if let Err(e) = result {

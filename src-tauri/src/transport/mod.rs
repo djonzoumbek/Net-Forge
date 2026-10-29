@@ -1,4 +1,4 @@
-//! Common interface implemented by every transport (SSH now, Telnet and serial later).
+//! Common interface implemented by every transport (SSH, Telnet, serial).
 //!
 //! The session runner only talks to this trait, so the terminal never depends on
 //! the protocol. Connecting is transport-specific (each one has its own parameters)
@@ -7,6 +7,7 @@
 #[cfg(test)]
 pub mod idle_proxy;
 pub mod net;
+pub mod serial;
 pub mod ssh;
 pub mod telnet;
 
@@ -65,6 +66,11 @@ pub enum TransportEvent {
 /// threads). Implementations can still be written with plain `async fn`.
 pub trait Transport: Send + 'static {
     fn info(&self) -> ConnectionInfo;
+
+    /// SSH only: access to the connection for SFTP. `None` for the others.
+    fn sftp_link(&self) -> Option<ssh::SshLink> {
+        None
+    }
 
     /// Waits for the next remote event.
     ///
