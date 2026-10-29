@@ -4,11 +4,12 @@ Client de terminal desktop personnel (SSH, puis Telnet et série) pour administr
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
 Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
 
-**État : phase 6 (journalisation et confort).** SSH et Telnet, une session
+**État : phase 7 (SFTP et port série).** SSH, Telnet et console série, une session
 par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
-session, recherche dans l'historique, thèmes, polices et raccourcis clavier.
+session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
+de fichiers SFTP.
 
 ## Prérequis (Ubuntu)
 
@@ -101,6 +102,41 @@ Négociation prise en charge : ECHO, SUPPRESS-GO-AHEAD, NAWS (taille de fenêtre
 transmise quand l'équipement l'accepte) et TERMINAL-TYPE (`XTERM-256COLOR`).
 La touche Entrée envoie `CR NUL`, comme le client `telnet` standard (RFC 854).
 
+## Transfert de fichiers (SFTP)
+
+Bouton **Fichiers** d'un onglet SSH connecté : un panneau s'ouvre sous le terminal, sur
+**la même connexion** (pas de nouveau mot de passe ni de nouvelle vérification de clé).
+
+- Navigation : double-clic sur un dossier, `↑` pour le parent, chemin modifiable.
+- **Envoyer…** : un ou plusieurs fichiers vers le dossier affiché. Un fichier du même
+  nom n'est jamais écrasé sans clic sur « Remplacer ».
+- `↓` : télécharger (dossier Téléchargements proposé). Le fichier est écrit sous
+  `<nom>.netforge-part` puis renommé une fois complet, avec les droits `0600`
+  (une configuration contient souvent des secrets).
+- Progression, annulation ; un transfert annulé ou en échec ne laisse aucun fichier
+  partiel (ni local, ni distant).
+- Fermer le panneau ne coupe pas les transferts ; fermer la session, si.
+- Les dossiers entiers ne sont pas transférés (fichier par fichier). Beaucoup
+  d'équipements réseau n'ont pas SFTP (seulement SCP) : un message le signale.
+
+## Console série
+
+Protocole **Série** dans la connexion rapide ou un profil : port (ports détectés
+listés, adaptateurs USB en premier), vitesse, bits de données, parité, bits de stop,
+contrôle de flux. Par défaut 9600 8N1 sans contrôle de flux (consoles Cisco et Huawei).
+
+**Droits d'accès** : sous Ubuntu, `/dev/ttyUSB*`, `/dev/ttyACM*` et `/dev/ttyS*`
+appartiennent au groupe `dialout`. Une seule fois :
+
+```bash
+sudo usermod -aG dialout $USER     # puis se déconnecter et se reconnecter
+```
+
+NetForge détecte le problème (port marqué « accès refusé » dans la liste) et explique
+la marche à suivre, y compris le cas « ajouté au groupe mais session pas encore
+rouverte ». Un port déjà ouvert ailleurs (minicom, screen) est signalé comme tel ;
+débrancher l'adaptateur est détecté comme une connexion perdue.
+
 ## Données
 
 Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) :
@@ -153,9 +189,15 @@ Le test `network_cut_is_detected_by_keepalive` met le conteneur en pause environ
 minute : lancé en même temps que les autres, il les fait échouer. Lance-le à part :
 
 ```bash
-cargo test -- --include-ignored --skip network_cut_is_detected_by_keepalive
+cargo test -- --include-ignored --skip network_cut_is_detected_by_keepalive --skip denied_port
 cargo test -- --ignored network_cut_is_detected_by_keepalive
 ```
+
+Les tests SFTP (`transfers::tests`) utilisent le même serveur Docker. Les tests du port
+série n'ont besoin d'aucun matériel : ils utilisent une paire de pseudo-terminaux. Le
+test `denied_port_explains_the_dialout_group` vérifie le message sur un vrai port
+inaccessible (compte hors du groupe `dialout`) :
+`NETFORGE_SERIAL_DENIED=/dev/ttyS0 cargo test -- --ignored denied_port`.
 
 ## Organisation
 
@@ -168,6 +210,9 @@ src/                      Frontend React + TypeScript
   features/sessions/      onglets (reducer, reconnexion auto), panneau d'une session
   features/commands/      barre de commandes, diffusion multi-sessions
   features/connections/   connexion rapide, arborescence et éditeur de profils
+  features/transfers/     panneau SFTP (navigation, transferts)
+  features/serial/        choix du port et réglages de ligne
+  hooks/                  glisser-déposer (événements pointeur)
   components/             barre d'onglets et de titre, barre d'état, dialogues
   services/               appels Tauri typés
   types/                  types partagés avec le backend
@@ -177,7 +222,9 @@ src-tauri/src/
                           automatismes (pager, invite, séquences),
                           journal de session (logger.rs)
   transport/              trait commun, ssh/ (russh, algorithmes modernes/legacy),
-                          telnet/ (négociation RFC 854/1073/1091), net.rs (TCP)
+                          telnet/ (négociation RFC 854/1073/1091), net.rs (TCP),
+                          serial/ (tokio-serial, diagnostic du groupe dialout)
+  transfers/              SFTP : listing, envoi/réception, progression, annulation
   persistence/            SQLite : migrations, profils, dossiers, réglages
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
