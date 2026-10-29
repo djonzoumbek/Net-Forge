@@ -518,3 +518,108 @@ code {
 .session-label {
   min-width: 0;
 }
+
+/* ---------- Tabs ---------- */
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  min-height: 34px;
+  overflow-x: auto;
+  background: var(--bg);
+  border-bottom: 1px solid var(--panel-border);
+  scrollbar-width: thin;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  padding: 0 6px 0 10px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-right: 1px solid var(--panel-border);
+  border-radius: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: #121922;
+}
+
+.tab.active {
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-close {
+  padding: 0 5px;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: none;
+}
+
+.tab-close:hover {
+  color: var(--text);
+  background: #2a3645;
+}
+
+.new-tab {
+  padding: 0 14px;
+  font-size: 1.1rem;
+}
+
+.badge.small {
+  padding: 0 5px;
+  font-size: 0.68rem;
+}
+
+.status-dot.attention {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgb(242 177 52 / 0.3);
+}
+
+/* Every session stays mounted; only the active one is displayed. */
+.panels {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.session-panel.inactive {
+  display: none;
+}
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.banner button.link {
+  margin-left: 0;
+}

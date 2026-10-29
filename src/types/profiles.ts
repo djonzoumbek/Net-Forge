@@ -1,6 +1,9 @@
 // Mirrors src-tauri/src/persistence/profiles.rs.
 
-export type AuthMethod = "password" | "keyFile" | "agent";
+export type Protocol = "ssh" | "telnet";
+
+/** "none": Telnet, the device asks for credentials in the terminal. */
+export type AuthMethod = "none" | "password" | "keyFile" | "agent";
 
 export interface Folder {
   id: number;
@@ -12,6 +15,7 @@ export interface Profile {
   id: number;
   folderId: number | null;
   name: string;
+  protocol: Protocol;
   host: string;
   port: number;
   username: string;
@@ -35,6 +39,7 @@ export type SecretChange =
 export interface ProfileInput {
   folderId: number | null;
   name: string;
+  protocol: Protocol;
   host: string;
   port: number;
   username: string;

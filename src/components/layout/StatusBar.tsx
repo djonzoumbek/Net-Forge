@@ -1,24 +1,21 @@
+import type { TabStatus } from "../../features/sessions/tabs";
 import type { ConnectionInfo } from "../../types/session";
 
-export type SessionStatus =
-  | { kind: "connecting" }
-  | { kind: "hostKey" }
-  | { kind: "connected"; info: ConnectionInfo }
-  | { kind: "closed"; reason: string; byRemote: boolean };
-
 interface StatusBarProps {
-  label: string;
-  status: SessionStatus;
+  title: string;
+  status: TabStatus;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onDisconnect: () => void;
-  onBack: () => void;
+  onCloseTab: () => void;
 }
 
-const statusText: Record<SessionStatus["kind"], string> = {
+const statusText: Record<TabStatus["kind"], string> = {
   connecting: "Connexion…",
   hostKey: "Vérification de la clé d'hôte",
   connected: "Connecté",
+  hostKeyChanged: "Clé d'hôte modifiée",
+  failed: "Échec de connexion",
   closed: "Déconnecté",
 };
 
@@ -50,8 +47,8 @@ function SecurityBadges({ info }: { info: ConnectionInfo }) {
   );
 }
 
-export function StatusBar({ label, status, sidebarOpen, onToggleSidebar, onDisconnect, onBack }: StatusBarProps) {
-  const closed = status.kind === "closed";
+export function StatusBar({ title, status, sidebarOpen, onToggleSidebar, onDisconnect, onCloseTab }: StatusBarProps) {
+  const live = status.kind === "connecting" || status.kind === "hostKey" || status.kind === "connected";
   return (
     <header className="status-bar">
       <button
@@ -63,14 +60,14 @@ export function StatusBar({ label, status, sidebarOpen, onToggleSidebar, onDisco
         ☰
       </button>
       <span className={`status-dot ${status.kind}`} aria-hidden />
-      <span className="session-label">{label}</span>
+      <span className="session-label">{title}</span>
       <span className="status-text">{statusText[status.kind]}</span>
       {status.kind === "connected" && <SecurityBadges info={status.info} />}
       <span className="spacer" />
-      {closed ? (
-        <button onClick={onBack}>Fermer</button>
-      ) : (
+      {live ? (
         <button onClick={onDisconnect}>{status.kind === "connected" ? "Déconnecter" : "Annuler"}</button>
+      ) : (
+        <button onClick={onCloseTab}>Fermer l'onglet</button>
       )}
     </header>
   );

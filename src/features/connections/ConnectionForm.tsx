@@ -1,9 +1,17 @@
 import { useState, type FormEvent } from "react";
-import type { SshConnectRequest } from "../../types/session";
+import type { Protocol } from "../../types/profiles";
+import type { SshConnectRequest, TelnetConnectRequest } from "../../types/session";
 
 type AuthMethod = "password" | "keyFile" | "agent";
 
+export type QuickConnection =
+  | { protocol: "ssh"; request: SshConnectRequest }
+  | { protocol: "telnet"; request: TelnetConnectRequest };
+
+export const defaultPort: Record<Protocol, string> = { ssh: "22", telnet: "23" };
+
 export interface ConnectionDraft {
+  protocol: Protocol;
   host: string;
   port: string;
   username: string;
@@ -13,6 +21,7 @@ export interface ConnectionDraft {
 }
 
 export const emptyDraft: ConnectionDraft = {
+  protocol: "ssh",
   host: "",
   port: "22",
   username: "",
@@ -25,7 +34,7 @@ interface ConnectionFormProps {
   /** Non-secret fields to prefill (e.g. after a failed attempt). */
   initial: ConnectionDraft;
   error?: string;
-  onConnect: (request: SshConnectRequest, draft: ConnectionDraft) => void;
+  onConnect: (connection: QuickConnection, draft: ConnectionDraft) => void;
 }
 
 export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProps) {
@@ -35,8 +44,17 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
   const [passphrase, setPassphrase] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
 
-  const update = (field: Exclude<keyof ConnectionDraft, "legacy">) => (value: string) =>
+  const update = (field: Exclude<keyof ConnectionDraft, "legacy" | "protocol">) => (value: string) =>
     setDraft((d) => ({ ...d, [field]: value }));
+
+  // Switching protocol also switches the port, unless the user typed a custom one.
+  const setProtocol = (protocol: Protocol) =>
+    setDraft((d) => ({
+      ...d,
+      protocol,
+      port: d.port === defaultPort[d.protocol] ? defaultPort[protocol] : d.port,
+    }));
+  const ssh = draft.protocol === "ssh";
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -44,6 +62,11 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
     if (!draft.host.trim()) return setValidation("Indique l'hôte.");
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       return setValidation("Le port doit être un entier entre 1 et 65535.");
+    if (!ssh) {
+      setValidation(null);
+      onConnect({ protocol: "telnet", request: { host: draft.host.trim(), port } }, draft);
+      return;
+    }
     if (!draft.username.trim()) return setValidation("Indique le nom d'utilisateur.");
     if (draft.method === "keyFile" && !draft.keyPath.trim())
       return setValidation("Indique le chemin de la clé privée.");
@@ -51,16 +74,19 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
 
     onConnect(
       {
-        host: draft.host.trim(),
-        port,
-        username: draft.username.trim(),
-        auth:
-          draft.method === "password"
-            ? { method: "password", password }
-            : draft.method === "keyFile"
-              ? { method: "keyFile", path: draft.keyPath.trim(), passphrase }
-              : { method: "agent" },
-        legacy: draft.legacy,
+        protocol: "ssh",
+        request: {
+          host: draft.host.trim(),
+          port,
+          username: draft.username.trim(),
+          auth:
+            draft.method === "password"
+              ? { method: "password", password }
+              : draft.method === "keyFile"
+                ? { method: "keyFile", path: draft.keyPath.trim(), passphrase }
+                : { method: "agent" },
+          legacy: draft.legacy,
+        },
       },
       draft,
     );
@@ -78,6 +104,24 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
       {message && (
         <p className="form-error" role="alert">
           {message}
+        </p>
+      )}
+
+      <fieldset className="auth-choice">
+        <legend>Protocole</legend>
+        <label>
+          <input type="radio" checked={ssh} onChange={() => setProtocol("ssh")} />
+          SSH
+        </label>
+        <label>
+          <input type="radio" checked={!ssh} onChange={() => setProtocol("telnet")} />
+          Telnet
+        </label>
+      </fieldset>
+      {!ssh && (
+        <p className="hint warning-text">
+          Telnet n'est pas chiffré : tout ce qui est tapé, mots de passe compris, circule en clair.
+          À réserver aux consoles de labo (GNS3, EVE-NG) et aux réseaux de confiance.
         </p>
       )}
 
@@ -103,73 +147,75 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
         </label>
       </div>
 
-      <label className="field">
-        <span>Utilisateur</span>
-        <input
-          value={draft.username}
-          onChange={(e) => update("username")(e.target.value)}
-          spellCheck={false}
-          autoCapitalize="off"
-        />
-      </label>
-
-      <fieldset className="auth-choice">
-        <legend>Authentification</legend>
-        <label>
-          <input
-            type="radio"
-            checked={draft.method === "password"}
-            onChange={() => update("method")("password")}
-          />
-          Mot de passe
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={draft.method === "keyFile"}
-            onChange={() => update("method")("keyFile")}
-          />
-          Clé privée
-        </label>
-        <label>
-          <input
-            type="radio"
-            checked={draft.method === "agent"}
-            onChange={() => update("method")("agent")}
-          />
-          Agent SSH
-        </label>
-      </fieldset>
-
-      {draft.method === "password" ? (
-        <label className="field">
-          <span>Mot de passe</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="off"
-          />
-        </label>
-      ) : draft.method === "keyFile" ? (
+      {ssh && (
         <>
           <label className="field">
-            <span>Fichier de clé privée</span>
+            <span>Utilisateur</span>
             <input
-              value={draft.keyPath}
-              onChange={(e) => update("keyPath")(e.target.value)}
+              value={draft.username}
+              onChange={(e) => update("username")(e.target.value)}
               spellCheck={false}
+              autoCapitalize="off"
             />
           </label>
-          <label className="field">
-            <span>Passphrase (si la clé est protégée)</span>
-            <input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              autoComplete="off"
-            />
-          </label>
+
+          <fieldset className="auth-choice">
+            <legend>Authentification</legend>
+            <label>
+              <input
+                type="radio"
+                checked={draft.method === "password"}
+                onChange={() => update("method")("password")}
+              />
+              Mot de passe
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={draft.method === "keyFile"}
+                onChange={() => update("method")("keyFile")}
+              />
+              Clé privée
+            </label>
+            <label>
+              <input
+                type="radio"
+                checked={draft.method === "agent"}
+                onChange={() => update("method")("agent")}
+              />
+              Agent SSH
+            </label>
+          </fieldset>
+
+          {draft.method === "password" ? (
+            <label className="field">
+              <span>Mot de passe</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+          ) : draft.method === "keyFile" ? (
+            <>
+              <label className="field">
+                <span>Fichier de clé privée</span>
+                <input
+                  value={draft.keyPath}
+                  onChange={(e) => update("keyPath")(e.target.value)}
+                  spellCheck={false}
+                />
+              </label>
+              <label className="field">
+                <span>Passphrase (si la clé est protégée)</span>
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  autoComplete="off"
+                />
+              </label>
         </>
       ) : null}
 
@@ -181,6 +227,8 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
         />
         Mode compatibilité équipements anciens
       </label>
+        </>
+      )}
 
       <button type="submit" className="primary">
         Se connecter

@@ -109,14 +109,15 @@ function ProfileItem({ profile, ...actions }: ProfileTreeActions & { profile: Pr
       <div className="tree-row profile">
         <button
           className="tree-label"
-          title={`${profile.username}@${profile.host}:${profile.port} — double-clic pour se connecter`}
+          title={`${profile.protocol === "telnet" ? "telnet://" : `${profile.username}@`}${profile.host}:${profile.port} — double-clic pour se connecter`}
           onDoubleClick={() => actions.onConnect(profile)}
           onKeyDown={(e) => {
             if (e.key === "Enter") actions.onConnect(profile);
           }}
         >
           {profile.name}
-          {profile.legacyMode && <span className="badge legacy">legacy</span>}
+          {profile.protocol === "telnet" && <span className="badge danger small">telnet</span>}
+          {profile.legacyMode && <span className="badge legacy small">legacy</span>}
         </button>
         <span className="row-actions">
           <button title="Se connecter" onClick={() => actions.onConnect(profile)}>

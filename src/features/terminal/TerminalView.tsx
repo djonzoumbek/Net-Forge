@@ -19,14 +19,22 @@ interface TerminalViewProps {
   open: SessionOpener;
   onEvent: (event: SessionEvent) => void;
   onSessionId: (id: SessionId) => void;
+  /** Visible tab: gets the keyboard focus. Hidden tabs keep running. */
+  active: boolean;
+}
+
+/** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown switch tabs: xterm must let them through. */
+function isTabShortcut(event: KeyboardEvent): boolean {
+  return event.ctrlKey && (event.key === "Tab" || event.key === "PageUp" || event.key === "PageDown");
 }
 
 /**
  * Owns one xterm.js instance and the backend session behind it: the session is
  * opened on mount and closed on unmount.
  */
-export function TerminalView({ open, onEvent, onSessionId }: TerminalViewProps) {
+export function TerminalView({ open, onEvent, onSessionId, active }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
   // Callbacks change on every parent render; keeping them in refs avoids
   // reopening the session each time.
   const onEventRef = useRef(onEvent);
@@ -107,6 +115,7 @@ export function TerminalView({ open, onEvent, onSessionId }: TerminalViewProps) 
 
     // Ctrl+Shift+C / Ctrl+Shift+V: copy/paste without stealing Ctrl+C from the shell.
     term.attachCustomKeyEventHandler((event) => {
+      if (isTabShortcut(event)) return false;
       if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true;
       if (event.code === "KeyC" && term.hasSelection()) {
         void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
@@ -127,10 +136,14 @@ export function TerminalView({ open, onEvent, onSessionId }: TerminalViewProps) 
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => fit.fit());
+      frame = requestAnimationFrame(() => {
+        // A hidden tab has a 0x0 container: fitting would shrink the remote
+        // terminal to 1 row. It is refitted when shown again.
+        if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit();
+      });
     });
     observer.observe(container);
-    term.focus();
+    termRef.current = term;
 
     return () => {
       disposed = true;
@@ -139,9 +152,14 @@ export function TerminalView({ open, onEvent, onSessionId }: TerminalViewProps) 
       subscriptions.forEach((s) => s.dispose());
       acks.dispose();
       if (sessionId !== null) void closeSession(sessionId).catch(() => {});
+      termRef.current = null;
       term.dispose();
     };
   }, [open]);
+
+  useEffect(() => {
+    if (active) termRef.current?.focus();
+  }, [active, open]);
 
   return <div className="terminal-host" ref={containerRef} />;
 }

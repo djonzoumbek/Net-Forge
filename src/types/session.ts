@@ -21,6 +21,11 @@ export interface SshConnectRequest {
   legacy?: boolean;
 }
 
+export interface TelnetConnectRequest {
+  host: string;
+  port: number;
+}
+
 export interface HostKeyInfo {
   host: string;
   port: number;

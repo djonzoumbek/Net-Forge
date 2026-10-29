@@ -1,42 +1,34 @@
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { ConfirmDialog } from "./components/dialogs/ConfirmDialog";
 import { HostKeyChangedDialog } from "./components/dialogs/HostKeyChangedDialog";
 import { HostKeyDialog } from "./components/dialogs/HostKeyDialog";
 import { SecretPrompt } from "./components/dialogs/SecretPrompt";
 import { TextPromptDialog } from "./components/dialogs/TextPromptDialog";
-import { StatusBar, type SessionStatus } from "./components/layout/StatusBar";
-import { ConnectionForm, emptyDraft, type ConnectionDraft } from "./features/connections/ConnectionForm";
+import { TabBar } from "./components/layout/TabBar";
+import {
+  ConnectionForm,
+  emptyDraft,
+  type ConnectionDraft,
+  type QuickConnection,
+} from "./features/connections/ConnectionForm";
 import { ProfileEditor } from "./features/connections/ProfileEditor";
 import { ProfileTree } from "./features/connections/ProfileTree";
 import { buildTree } from "./features/connections/tree";
 import { useLibrary } from "./features/connections/useLibrary";
-import { TerminalView } from "./features/terminal/TerminalView";
+import { SessionPanel } from "./features/sessions/SessionPanel";
+import { initialTabs, tabsReducer, type SessionTarget, type Tab } from "./features/sessions/tabs";
 import * as profiles from "./services/profileService";
 import {
   answerHostKey,
-  closeSession,
   profileOpener,
   replaceHostKey,
   sshOpener,
+  telnetOpener,
   toAppError,
-  type SessionOpener,
 } from "./services/sessionService";
 import type { Folder, Profile, ProfileInput } from "./types/profiles";
-import type { HostKeyInfo, HostKeyMismatch, SessionEvent, SessionId, SshConnectRequest } from "./types/session";
+import type { SessionEvent } from "./types/session";
 import "./styles/app.css";
-
-interface SessionTarget {
-  label: string;
-  open: SessionOpener;
-  profile?: Profile;
-  /** Secret typed at connection time, to save in the keyring once logged in. */
-  secretToSave?: string;
-}
-
-type View =
-  | { kind: "home"; error?: string }
-  // `attempt` is the TerminalView key: incrementing it reconnects.
-  | { kind: "session"; target: SessionTarget; attempt: number };
 
 type Dialog =
   | { kind: "profile"; profile?: Profile; folderId: number | null }
@@ -44,123 +36,135 @@ type Dialog =
   | { kind: "renameFolder"; folder: Folder }
   | { kind: "deleteProfile"; profile: Profile }
   | { kind: "deleteFolder"; folder: Folder }
-  | { kind: "secret"; profile: Profile; secretKind: "password" | "passphrase" }
-  | { kind: "replaceSession"; target: SessionTarget };
+  // `tabKey`: retry in that tab instead of opening a new one.
+  | { kind: "secret"; profile: Profile; secretKind: "password" | "passphrase"; tabKey?: number };
 
-const endpoint = (p: { username: string; host: string; port: number }) => `${p.username}@${p.host}:${p.port}`;
+function describe(protocol: "ssh" | "telnet", host: string, port: number, username?: string): string {
+  return protocol === "telnet" ? `telnet://${host}:${port}` : `${username}@${host}:${port}`;
+}
+
+function profileTarget(profile: Profile, secret?: string, save = false): SessionTarget {
+  return {
+    label: profile.name,
+    title: `${profile.name} — ${describe(profile.protocol, profile.host, profile.port, profile.username)}`,
+    protocol: profile.protocol,
+    open: profileOpener(profile.id, secret),
+    profile,
+    secretToSave: save ? secret : undefined,
+  };
+}
+
+function quickTarget(connection: QuickConnection): SessionTarget {
+  const { host, port } = connection.request;
+  if (connection.protocol === "telnet") {
+    return {
+      label: `${host}:${port}`,
+      title: describe("telnet", host, port),
+      protocol: "telnet",
+      open: telnetOpener(connection.request),
+    };
+  }
+  return {
+    label: host,
+    title: describe("ssh", host, port, connection.request.username),
+    protocol: "ssh",
+    open: sshOpener(connection.request),
+  };
+}
 
 function App() {
   const { library, error: libraryError, reload } = useLibrary();
   const tree = useMemo(() => buildTree(library), [library]);
-
-  const [view, setView] = useState<View>({ kind: "home" });
+  const [state, dispatch] = useReducer(tabsReducer, initialTabs);
   const [draft, setDraft] = useState<ConnectionDraft>(emptyDraft);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [status, setStatus] = useState<SessionStatus>({ kind: "connecting" });
-  const [sessionId, setSessionId] = useState<SessionId | null>(null);
-  const [hostKey, setHostKey] = useState<HostKeyInfo | null>(null);
-  const [mismatch, setMismatch] = useState<HostKeyMismatch | null>(null);
 
-  const sessionLive = view.kind === "session" && status.kind !== "closed";
+  const activeTab = state.tabs.find((tab) => tab.key === state.active) ?? null;
 
-  function startSession(target: SessionTarget) {
-    setStatus({ kind: "connecting" });
-    setSessionId(null);
-    setHostKey(null);
-    setMismatch(null);
-    setView((current) => ({
-      kind: "session",
-      target,
-      attempt: current.kind === "session" ? current.attempt + 1 : 0,
-    }));
-  }
-
-  /** Phase 3 has a single session: ask before replacing a live one (tabs: phase 4). */
-  function requestSession(target: SessionTarget) {
-    if (sessionLive) setDialog({ kind: "replaceSession", target });
-    else startSession(target);
-  }
-
-  function connectProfile(profile: Profile, secret?: string, save = false) {
-    if (secret === undefined && profile.authMethod === "password" && !profile.hasSavedSecret) {
-      setDialog({ kind: "secret", profile, secretKind: "password" });
-      return;
-    }
-    requestSession({
-      label: `${profile.name} — ${endpoint(profile)}`,
-      open: profileOpener(profile.id, secret),
-      profile,
-      secretToSave: save ? secret : undefined,
-    });
-  }
-
-  function quickConnect(request: SshConnectRequest, nextDraft: ConnectionDraft) {
-    setDraft(nextDraft);
-    requestSession({ label: endpoint(request), open: sshOpener(request) });
-  }
-
-  const target = view.kind === "session" ? view.target : null;
-
-  const handleEvent = useCallback(
-    (event: SessionEvent) => {
-      switch (event.type) {
-        case "hostKeyPrompt":
-          setHostKey(event.info);
-          setStatus({ kind: "hostKey" });
-          break;
-        case "hostKeyChanged":
-          setMismatch(event.mismatch);
-          setStatus({ kind: "closed", reason: "Connexion bloquée : clé d'hôte modifiée.", byRemote: true });
-          break;
-        case "connected":
-          setStatus({ kind: "connected", info: event.info });
-          if (target?.profile && target.secretToSave) {
-            profiles
-              .saveProfileSecret(target.profile.id, target.secretToSave)
-              .then(reload)
-              .catch((e) => console.warn("secret not saved", toAppError(e).message));
-          }
-          break;
-        case "failed": {
-          setHostKey(null);
-          const profile = target?.profile;
-          // A protected key or a missing saved password: ask and retry.
-          if (profile && (event.code === "passphrase_required" || event.code === "password_required")) {
-            setView({ kind: "home" });
-            setDialog({
-              kind: "secret",
-              profile,
-              secretKind: event.code === "passphrase_required" ? "passphrase" : "password",
-            });
-          } else {
-            setView({ kind: "home", error: event.message });
-          }
-          break;
-        }
-        case "closed":
-          setHostKey(null);
-          setStatus({ kind: "closed", reason: event.reason, byRemote: event.byRemote });
-          break;
+  // Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+PageDown / Ctrl+PageUp: switch tabs.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!event.ctrlKey) return;
+      const step =
+        event.key === "Tab" ? (event.shiftKey ? -1 : 1)
+        : event.key === "PageDown" ? 1
+        : event.key === "PageUp" ? -1
+        : 0;
+      if (step !== 0) {
+        event.preventDefault();
+        dispatch({ type: "cycle", step });
       }
-    },
-    [target, reload],
-  );
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
-  function handleHostKeyAnswer(accept: boolean) {
-    setHostKey(null);
-    setStatus({ kind: "connecting" });
-    if (sessionId !== null) void answerHostKey(sessionId, accept).catch(() => {});
+  function connectProfile(profile: Profile) {
+    const needsPassword =
+      profile.protocol === "ssh" && profile.authMethod === "password" && !profile.hasSavedSecret;
+    if (needsPassword) setDialog({ kind: "secret", profile, secretKind: "password" });
+    else dispatch({ type: "open", target: profileTarget(profile) });
   }
 
-  async function handleReplaceKey() {
-    if (!mismatch || !target) return;
+  function quickConnect(connection: QuickConnection, nextDraft: ConnectionDraft) {
+    setDraft(nextDraft);
+    dispatch({ type: "open", target: quickTarget(connection) });
+  }
+
+  /** Side effects of session events (the reducer itself stays pure). */
+  function handleEvent(tab: Tab, event: SessionEvent) {
+    dispatch({ type: "event", key: tab.key, attempt: tab.attempt, event });
+    const { profile, secretToSave } = tab.target;
+    if (event.type === "connected" && profile && secretToSave) {
+      profiles
+        .saveProfileSecret(profile.id, secretToSave)
+        .then(reload)
+        .catch((e) => setActionError(`Mot de passe non enregistré : ${toAppError(e).message}`));
+    }
+    if (event.type === "failed" && profile) {
+      if (event.code === "passphrase_required" || event.code === "password_required") {
+        setDialog({
+          kind: "secret",
+          profile,
+          secretKind: event.code === "passphrase_required" ? "passphrase" : "password",
+          tabKey: tab.key,
+        });
+      }
+    }
+  }
+
+  function retry(tab: Tab) {
+    const { profile } = tab.target;
+    // A profile is re-read from the library: it may have been edited since.
+    const fresh = profile && library.profiles.find((p) => p.id === profile.id);
+    if (fresh) {
+      const needsPassword =
+        fresh.protocol === "ssh" && fresh.authMethod === "password" && !fresh.hasSavedSecret;
+      if (needsPassword && !tab.target.secretToSave) {
+        setDialog({ kind: "secret", profile: fresh, secretKind: "password", tabKey: tab.key });
+        return;
+      }
+    }
+    dispatch({ type: "retry", key: tab.key, target: fresh ? profileTarget(fresh) : undefined });
+  }
+
+  function answerActiveHostKey(accept: boolean) {
+    if (!activeTab || activeTab.sessionId === null) return;
+    void answerHostKey(activeTab.sessionId, accept).catch(() => {});
+    dispatch({ type: "hostKeyAnswered", key: activeTab.key });
+  }
+
+  async function replaceActiveHostKey() {
+    if (activeTab?.status.kind !== "hostKeyChanged") return;
+    const { mismatch } = activeTab.status;
     try {
       await replaceHostKey(mismatch.host, mismatch.port, mismatch.newFingerprint);
-      startSession(target);
+      dispatch({ type: "retry", key: activeTab.key });
     } catch (e) {
-      setMismatch(null);
-      setView({ kind: "home", error: toAppError(e).message });
+      dispatch({ type: "dismissMismatch", key: activeTab.key });
+      setActionError(toAppError(e).message);
     }
   }
 
@@ -171,13 +175,14 @@ function App() {
     await reload();
   }
 
-  /** Runs a library change, then reloads; errors are shown on the home view. */
+  /** Runs a library change, then reloads; errors are shown in the sidebar. */
   async function mutate(action: () => Promise<unknown>) {
     setDialog(null);
     try {
       await action();
+      setActionError(null);
     } catch (e) {
-      setView({ kind: "home", error: toAppError(e).message });
+      setActionError(toAppError(e).message);
     }
     await reload();
   }
@@ -221,7 +226,7 @@ function App() {
         return (
           <ConfirmDialog
             title="Supprimer le profil"
-            message={`Supprimer « ${dialog.profile.name} » ? Le mot de passe éventuellement enregistré sera aussi retiré du trousseau.`}
+            message={`Supprimer « ${dialog.profile.name} » ? Le mot de passe éventuellement enregistré sera aussi retiré du trousseau. Les onglets ouverts restent ouverts.`}
             confirmLabel="Supprimer"
             onConfirm={() => mutate(() => profiles.deleteProfile(dialog.profile.id))}
             onCancel={close}
@@ -245,20 +250,13 @@ function App() {
             canSave
             onSubmit={(secret, save) => {
               setDialog(null);
-              connectProfile(dialog.profile, secret, save);
-            }}
-            onCancel={close}
-          />
-        );
-      case "replaceSession":
-        return (
-          <ConfirmDialog
-            title="Remplacer la session en cours ?"
-            message="Une seule session à la fois pour l'instant (les onglets arrivent en phase 4). La session actuelle sera fermée."
-            confirmLabel="Fermer et se connecter"
-            onConfirm={() => {
-              setDialog(null);
-              startSession(dialog.target);
+              const target = profileTarget(dialog.profile, secret, save);
+              if (dialog.tabKey !== undefined) {
+                dispatch({ type: "retry", key: dialog.tabKey, target });
+                dispatch({ type: "activate", key: dialog.tabKey });
+              } else {
+                dispatch({ type: "open", target });
+              }
             }}
             onCancel={close}
           />
@@ -271,9 +269,9 @@ function App() {
       {sidebarOpen && (
         <ProfileTree
           tree={tree}
-          error={libraryError}
-          onQuickConnect={() => setView({ kind: "home" })}
-          onConnect={(profile) => connectProfile(profile)}
+          error={actionError ?? libraryError}
+          onQuickConnect={() => dispatch({ type: "activate", key: null })}
+          onConnect={connectProfile}
           onNewProfile={(folderId) => setDialog({ kind: "profile", folderId })}
           onEditProfile={(profile) => setDialog({ kind: "profile", profile, folderId: profile.folderId })}
           onDeleteProfile={(profile) => setDialog({ kind: "deleteProfile", profile })}
@@ -284,53 +282,53 @@ function App() {
       )}
 
       <section className="workspace">
-        {view.kind === "home" ? (
-          <div className="home">
-            {!sidebarOpen && (
-              <button className="icon-button floating" onClick={() => setSidebarOpen(true)} aria-label="Profils">
-                ☰
-              </button>
-            )}
-            <ConnectionForm initial={draft} error={view.error} onConnect={quickConnect} />
-          </div>
-        ) : (
-          <>
-            <StatusBar
-              label={view.target.label}
-              status={status}
+        <TabBar
+          tabs={state.tabs}
+          active={state.active}
+          onActivate={(key) => dispatch({ type: "activate", key })}
+          onClose={(key) => dispatch({ type: "close", key })}
+        />
+        <div className="panels">
+          {state.active === null && (
+            <div className="home">
+              {!sidebarOpen && (
+                <button className="icon-button floating" onClick={() => setSidebarOpen(true)} aria-label="Profils">
+                  ☰
+                </button>
+              )}
+              <ConnectionForm initial={draft} onConnect={quickConnect} />
+            </div>
+          )}
+          {state.tabs.map((tab) => (
+            <SessionPanel
+              key={tab.key}
+              tab={tab}
+              active={tab.key === state.active}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((open) => !open)}
-              onDisconnect={() => {
-                if (sessionId !== null) void closeSession(sessionId).catch(() => {});
-              }}
-              onBack={() => setView({ kind: "home" })}
-            />
-            {status.kind === "closed" && (
-              <div className={`banner ${status.byRemote ? "warning" : ""}`} role="status">
-                {status.reason}
-                {status.byRemote && !mismatch && (
-                  <button className="link" onClick={() => startSession(view.target)}>
-                    Se reconnecter
-                  </button>
-                )}
-              </div>
-            )}
-            <TerminalView
-              key={view.attempt}
-              open={view.target.open}
               onEvent={handleEvent}
-              onSessionId={setSessionId}
+              onSessionId={(t, id) => dispatch({ type: "sessionId", key: t.key, attempt: t.attempt, id })}
+              onRetry={retry}
+              onClose={(t) => dispatch({ type: "close", key: t.key })}
+              onEditProfile={(t) =>
+                t.target.profile &&
+                setDialog({ kind: "profile", profile: t.target.profile, folderId: t.target.profile.folderId })
+              }
             />
-          </>
-        )}
+          ))}
+        </div>
       </section>
 
-      {hostKey && <HostKeyDialog info={hostKey} onAnswer={handleHostKeyAnswer} />}
-      {mismatch && (
+      {/* Host key questions are asked for the visible tab only; other tabs wait
+          (their dot turns orange) so typing in one tab is never interrupted. */}
+      {activeTab?.status.kind === "hostKey" && (
+        <HostKeyDialog info={activeTab.status.info} onAnswer={answerActiveHostKey} />
+      )}
+      {activeTab?.status.kind === "hostKeyChanged" && (
         <HostKeyChangedDialog
-          mismatch={mismatch}
-          onReplace={handleReplaceKey}
-          onCancel={() => setMismatch(null)}
+          mismatch={activeTab.status.mismatch}
+          onReplace={replaceActiveHostKey}
+          onCancel={() => dispatch({ type: "dismissMismatch", key: activeTab.key })}
         />
       )}
       {renderDialog()}

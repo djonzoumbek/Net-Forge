@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { Modal } from "../../components/dialogs/Modal";
 import { toAppError } from "../../services/sessionService";
-import type { AuthMethod, Profile, ProfileInput, SecretChange } from "../../types/profiles";
+import type { AuthMethod, Profile, ProfileInput, Protocol, SecretChange } from "../../types/profiles";
+import { defaultPort } from "./ConnectionForm";
 import { flattenFolders, type Tree } from "./tree";
 
 interface ProfileEditorProps {
@@ -15,14 +16,18 @@ interface ProfileEditorProps {
 
 /** What to do with the saved secret of an existing profile. */
 type SavedSecretAction = "keep" | "replace" | "clear";
+type SshAuthMethod = Exclude<AuthMethod, "none">;
 
 export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel }: ProfileEditorProps) {
   const [name, setName] = useState(profile?.name ?? "");
   const [folderId, setFolderId] = useState<number | null>(profile?.folderId ?? defaultFolderId);
+  const [protocol, setProtocol] = useState<Protocol>(profile?.protocol ?? "ssh");
   const [host, setHost] = useState(profile?.host ?? "");
   const [port, setPort] = useState(String(profile?.port ?? 22));
   const [username, setUsername] = useState(profile?.username ?? "");
-  const [authMethod, setAuthMethod] = useState<AuthMethod>(profile?.authMethod ?? "password");
+  const [authMethod, setAuthMethod] = useState<SshAuthMethod>(
+    profile && profile.authMethod !== "none" ? profile.authMethod : "password",
+  );
   const [keyPath, setKeyPath] = useState(profile?.keyPath ?? "~/.ssh/id_ed25519");
   const [legacyMode, setLegacyMode] = useState(profile?.legacyMode ?? false);
   const [saveSecret, setSaveSecret] = useState(false);
@@ -32,10 +37,17 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   const [saving, setSaving] = useState(false);
 
   const hasSaved = profile?.hasSavedSecret ?? false;
+  const ssh = protocol === "ssh";
+
+  function changeProtocol(next: Protocol) {
+    // Keep a custom port; swap only the default one.
+    if (port === defaultPort[protocol]) setPort(defaultPort[next]);
+    setProtocol(next);
+  }
   const secretLabel = authMethod === "password" ? "mot de passe" : "passphrase";
 
   function secretChange(): SecretChange {
-    if (authMethod === "agent") return { action: "clear" };
+    if (!ssh || authMethod === "agent") return { action: "clear" };
     if (hasSaved) {
       if (savedAction === "clear") return { action: "clear" };
       if (savedAction === "replace" && secret) return { action: "set", value: secret };
@@ -56,12 +68,13 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
       await onSave({
         folderId,
         name,
+        protocol,
         host,
         port: portNumber,
-        username,
-        authMethod,
-        keyPath: authMethod === "keyFile" ? keyPath : null,
-        legacyMode,
+        username: ssh ? username : "",
+        authMethod: ssh ? authMethod : "none",
+        keyPath: ssh && authMethod === "keyFile" ? keyPath : null,
+        legacyMode: ssh && legacyMode,
         secret: secretChange(),
       });
     } catch (e) {
@@ -71,7 +84,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   }
 
   const showSecretInput =
-    authMethod !== "agent" && (hasSaved ? savedAction === "replace" : saveSecret);
+    ssh && authMethod !== "agent" && (hasSaved ? savedAction === "replace" : saveSecret);
 
   return (
     <Modal title={profile ? `Modifier « ${profile.name} »` : "Nouveau profil"} onCancel={onCancel} wide>
@@ -102,6 +115,24 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
           </label>
         </div>
 
+        <fieldset className="auth-choice">
+          <legend>Protocole</legend>
+          <label>
+            <input type="radio" checked={ssh} onChange={() => changeProtocol("ssh")} />
+            SSH
+          </label>
+          <label>
+            <input type="radio" checked={!ssh} onChange={() => changeProtocol("telnet")} />
+            Telnet
+          </label>
+        </fieldset>
+        {!ssh && (
+          <p className="hint warning-text">
+            Telnet n'est pas chiffré. Aucun mot de passe n'est enregistré pour un profil Telnet :
+            l'équipement le demande dans le terminal.
+          </p>
+        )}
+
         <div className="field-row">
           <label className="field grow">
             <span>Hôte</span>
@@ -113,84 +144,88 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
           </label>
         </div>
 
-        <label className="field">
-          <span>Utilisateur</span>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} spellCheck={false} />
-        </label>
-
-        <fieldset className="auth-choice">
-          <legend>Authentification</legend>
-          {(
-            [
-              ["password", "Mot de passe"],
-              ["keyFile", "Clé privée"],
-              ["agent", "Agent SSH"],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value}>
-              <input type="radio" checked={authMethod === value} onChange={() => setAuthMethod(value)} />
-              {label}
+        {ssh && (
+          <>
+            <label className="field">
+              <span>Utilisateur</span>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} spellCheck={false} />
             </label>
-          ))}
-        </fieldset>
 
-        {authMethod === "keyFile" && (
-          <label className="field">
-            <span>Fichier de clé privée</span>
-            <input value={keyPath} onChange={(e) => setKeyPath(e.target.value)} spellCheck={false} />
-          </label>
-        )}
-
-        {authMethod !== "agent" &&
-          (hasSaved ? (
             <fieldset className="auth-choice">
-              <legend>Un {secretLabel} est enregistré dans le trousseau</legend>
-              <label>
-                <input type="radio" checked={savedAction === "keep"} onChange={() => setSavedAction("keep")} />
-                Le garder
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  checked={savedAction === "replace"}
-                  onChange={() => setSavedAction("replace")}
-                />
-                Le remplacer
-              </label>
-              <label>
-                <input type="radio" checked={savedAction === "clear"} onChange={() => setSavedAction("clear")} />
-                Le supprimer
-              </label>
+              <legend>Authentification</legend>
+              {(
+                [
+                  ["password", "Mot de passe"],
+                  ["keyFile", "Clé privée"],
+                  ["agent", "Agent SSH"],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value}>
+                  <input type="radio" checked={authMethod === value} onChange={() => setAuthMethod(value)} />
+                  {label}
+                </label>
+              ))}
             </fieldset>
-          ) : (
+
+            {authMethod === "keyFile" && (
+              <label className="field">
+                <span>Fichier de clé privée</span>
+                <input value={keyPath} onChange={(e) => setKeyPath(e.target.value)} spellCheck={false} />
+              </label>
+            )}
+
+            {authMethod !== "agent" &&
+              (hasSaved ? (
+                <fieldset className="auth-choice">
+                  <legend>Un {secretLabel} est enregistré dans le trousseau</legend>
+                  <label>
+                    <input type="radio" checked={savedAction === "keep"} onChange={() => setSavedAction("keep")} />
+                    Le garder
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      checked={savedAction === "replace"}
+                      onChange={() => setSavedAction("replace")}
+                    />
+                    Le remplacer
+                  </label>
+                  <label>
+                    <input type="radio" checked={savedAction === "clear"} onChange={() => setSavedAction("clear")} />
+                    Le supprimer
+                  </label>
+                </fieldset>
+              ) : (
+                <label className="checkbox">
+                  <input type="checkbox" checked={saveSecret} onChange={(e) => setSaveSecret(e.target.checked)} />
+                  Enregistrer le {secretLabel} dans le trousseau système
+                </label>
+              ))}
+
+            {showSecretInput && (
+              <label className="field">
+                <span>{authMethod === "password" ? "Mot de passe" : "Passphrase"}</span>
+                <input
+                  type="password"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  autoComplete="off"
+                />
+              </label>
+            )}
+
             <label className="checkbox">
-              <input type="checkbox" checked={saveSecret} onChange={(e) => setSaveSecret(e.target.checked)} />
-              Enregistrer le {secretLabel} dans le trousseau système
+              <input type="checkbox" checked={legacyMode} onChange={(e) => setLegacyMode(e.target.checked)} />
+              Mode compatibilité équipements anciens
             </label>
-          ))}
-
-        {showSecretInput && (
-          <label className="field">
-            <span>{authMethod === "password" ? "Mot de passe" : "Passphrase"}</span>
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              autoComplete="off"
-            />
-          </label>
-        )}
-
-        <label className="checkbox">
-          <input type="checkbox" checked={legacyMode} onChange={(e) => setLegacyMode(e.target.checked)} />
-          Mode compatibilité équipements anciens
-        </label>
-        {legacyMode && (
-          <p className="hint warning-text">
-            Autorise des algorithmes obsolètes (diffie-hellman-group1/14-sha1, ssh-rsa, aes-cbc,
-            3des-cbc, hmac-sha1) pour ce profil uniquement. Les algorithmes modernes restent
-            prioritaires. À réserver aux vieux Cisco IOS / Huawei VRP.
-          </p>
+            {legacyMode && (
+              <p className="hint warning-text">
+                Autorise des algorithmes obsolètes (diffie-hellman-group1/14-sha1, ssh-rsa, aes-cbc,
+                3des-cbc, hmac-sha1) pour ce profil uniquement. Les algorithmes modernes restent
+                prioritaires. À réserver aux vieux Cisco IOS / Huawei VRP.
+              </p>
+            )}
+          </>
         )}
 
         <div className="dialog-actions">

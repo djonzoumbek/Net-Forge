@@ -5,6 +5,7 @@ import type {
   SessionEvent,
   SessionId,
   SshConnectRequest,
+  TelnetConnectRequest,
   TermSize,
 } from "../types/session";
 
@@ -45,6 +46,11 @@ function channels(onData: (bytes: Uint8Array) => void, onEvent: (event: SessionE
 export function sshOpener(request: SshConnectRequest): SessionOpener {
   return (size, onData, onEvent) =>
     invoke<SessionId>("session_open_ssh", { request, size, ...channels(onData, onEvent) });
+}
+
+export function telnetOpener(request: TelnetConnectRequest): SessionOpener {
+  return (size, onData, onEvent) =>
+    invoke<SessionId>("session_open_telnet", { request, size, ...channels(onData, onEvent) });
 }
 
 /** `secret`: password/passphrase typed by the user when none is saved. */
