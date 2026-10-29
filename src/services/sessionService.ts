@@ -64,6 +64,11 @@ export function profileOpener(profileId: number, secret?: string): SessionOpener
     });
 }
 
+/** Types each line of `text` (followed by Enter), `delayMs` apart. */
+export function sendSequence(id: SessionId, text: string, delayMs: number): Promise<void> {
+  return invoke("session_send_sequence", { id, text, delayMs });
+}
+
 export function replaceHostKey(host: string, port: number, fingerprint: string): Promise<void> {
   return invoke("known_hosts_replace", { host, port, fingerprint });
 }

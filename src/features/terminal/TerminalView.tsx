@@ -12,6 +12,7 @@ import {
 } from "../../services/sessionService";
 import type { SessionEvent, SessionId } from "../../types/session";
 import { createAckBatcher, createInputQueue } from "./flowControl";
+import { needsPasteConfirmation } from "./paste";
 import { terminalTheme } from "./theme";
 
 interface TerminalViewProps {
@@ -21,6 +22,8 @@ interface TerminalViewProps {
   onSessionId: (id: SessionId) => void;
   /** Visible tab: gets the keyboard focus. Hidden tabs keep running. */
   active: boolean;
+  /** Multi-line paste: ask the user, then call `paste()` to really send it. */
+  onPasteRequest: (text: string, paste: () => void) => void;
 }
 
 /** Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/PageDown switch tabs: xterm must let them through. */
@@ -32,16 +35,18 @@ function isTabShortcut(event: KeyboardEvent): boolean {
  * Owns one xterm.js instance and the backend session behind it: the session is
  * opened on mount and closed on unmount.
  */
-export function TerminalView({ open, onEvent, onSessionId, active }: TerminalViewProps) {
+export function TerminalView({ open, onEvent, onSessionId, active, onPasteRequest }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   // Callbacks change on every parent render; keeping them in refs avoids
   // reopening the session each time.
   const onEventRef = useRef(onEvent);
   const onSessionIdRef = useRef(onSessionId);
+  const onPasteRequestRef = useRef(onPasteRequest);
   useEffect(() => {
     onEventRef.current = onEvent;
     onSessionIdRef.current = onSessionId;
+    onPasteRequestRef.current = onPasteRequest;
   });
 
   useEffect(() => {
@@ -113,6 +118,22 @@ export function TerminalView({ open, onEvent, onSessionId, active }: TerminalVie
       }),
     ];
 
+    // Every paste goes through here: more than one line needs a confirmation.
+    const pasteChecked = (text: string) => {
+      if (needsPasteConfirmation(text)) onPasteRequestRef.current(text, () => term.paste(text));
+      else term.paste(text);
+    };
+    // Browser pastes (context menu, middle click on Linux) reach xterm through a
+    // `paste` event: intercept it first (capture phase).
+    const onPaste = (event: ClipboardEvent) => {
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      if (!needsPasteConfirmation(text)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pasteChecked(text);
+    };
+    container.addEventListener("paste", onPaste, true);
+
     // Ctrl+Shift+C / Ctrl+Shift+V: copy/paste without stealing Ctrl+C from the shell.
     term.attachCustomKeyEventHandler((event) => {
       if (isTabShortcut(event)) return false;
@@ -124,7 +145,7 @@ export function TerminalView({ open, onEvent, onSessionId, active }: TerminalVie
       if (event.code === "KeyV") {
         void navigator.clipboard
           .readText()
-          .then((text) => term.paste(text))
+          .then(pasteChecked)
           .catch(() => {});
         return false;
       }
@@ -147,6 +168,7 @@ export function TerminalView({ open, onEvent, onSessionId, active }: TerminalVie
 
     return () => {
       disposed = true;
+      container.removeEventListener("paste", onPaste, true);
       observer.disconnect();
       cancelAnimationFrame(frame);
       subscriptions.forEach((s) => s.dispose());

@@ -525,10 +525,8 @@ code {
   display: flex;
   align-items: stretch;
   min-height: 34px;
-  overflow-x: auto;
   background: var(--bg);
   border-bottom: 1px solid var(--panel-border);
-  scrollbar-width: thin;
 }
 
 .tab {
@@ -622,4 +620,206 @@ code {
 
 .banner button.link {
   margin-left: 0;
+}
+
+/* ---------- Custom title bar (no system decorations) ---------- */
+
+.tabs-scroll {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.drag-region {
+  flex: 1;
+  min-width: 40px;
+}
+
+.sidebar-header {
+  user-select: none;
+}
+
+.window-controls {
+  display: flex;
+  flex: none;
+}
+
+.window-controls button {
+  width: 42px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.window-controls button:hover {
+  color: var(--text);
+  background: #222c38;
+}
+
+.window-controls button.close:hover {
+  color: #fff;
+  background: #c0392b;
+}
+
+/* Invisible borders used to resize the window. */
+.resize-handle {
+  position: fixed;
+  z-index: 100;
+}
+
+.resize-handle.north,
+.resize-handle.south {
+  left: 8px;
+  right: 8px;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.resize-handle.north {
+  top: 0;
+}
+
+.resize-handle.south {
+  bottom: 0;
+}
+
+.resize-handle.east,
+.resize-handle.west {
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  cursor: ew-resize;
+}
+
+.resize-handle.east {
+  right: 0;
+}
+
+.resize-handle.west {
+  left: 0;
+}
+
+.resize-handle.northeast,
+.resize-handle.northwest,
+.resize-handle.southeast,
+.resize-handle.southwest {
+  width: 8px;
+  height: 8px;
+}
+
+.resize-handle.northwest {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle.southeast {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle.northeast {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.resize-handle.southwest {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+/* ---------- Forms: sections, textareas, presets ---------- */
+
+fieldset.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+fieldset.section legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.grow {
+  flex: 1;
+}
+
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font-family: "DejaVu Sans Mono", "Ubuntu Mono", monospace;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.presets button {
+  padding: 3px 10px;
+  font-size: 0.85rem;
+}
+
+/* ---------- Command bar ---------- */
+
+.command-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  overflow-x: auto;
+  background: var(--bg);
+  border-bottom: 1px solid var(--panel-border);
+  scrollbar-width: thin;
+}
+
+.command-bar button {
+  flex: none;
+  padding: 2px 10px;
+  font-size: 0.85rem;
+}
+
+.command-bar button.add {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+.preview {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-family: "DejaVu Sans Mono", "Ubuntu Mono", monospace;
+  font-size: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  white-space: pre;
+}
+
+.target-list {
+  margin: 4px 0;
+  padding-left: 20px;
+  color: var(--muted);
 }

@@ -11,7 +11,7 @@ export interface Folder {
   parentId: number | null;
 }
 
-export interface Profile {
+export interface Profile extends SessionOptions {
   id: number;
   folderId: number | null;
   name: string;
@@ -26,6 +26,18 @@ export interface Profile {
   legacyMode: boolean;
 }
 
+/** How a session of the profile behaves once connected. */
+export interface SessionOptions {
+  /** Keepalive interval in seconds, 0 = disabled. */
+  keepaliveSecs: number;
+  /** Reconnect when the connection is lost (never after `exit`). */
+  autoReconnect: boolean;
+  /** Answer --More-- like pager prompts with a space. */
+  pagerAutoReply: boolean;
+  /** One command per line, sent at the first prompt. Stored in clear. */
+  loginCommands: string;
+}
+
 export interface Library {
   folders: Folder[];
   profiles: Profile[];
@@ -36,7 +48,7 @@ export type SecretChange =
   | { action: "set"; value: string }
   | { action: "clear" };
 
-export interface ProfileInput {
+export interface ProfileInput extends SessionOptions {
   folderId: number | null;
   name: string;
   protocol: Protocol;
@@ -48,3 +60,14 @@ export interface ProfileInput {
   legacyMode: boolean;
   secret: SecretChange;
 }
+
+export interface CommandButton {
+  id: number;
+  label: string;
+  /** One command per line. */
+  commands: string;
+  /** Pause between two lines. */
+  delayMs: number;
+}
+
+export type ButtonInput = Omit<CommandButton, "id">;

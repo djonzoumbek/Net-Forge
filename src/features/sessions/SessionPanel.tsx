@@ -1,69 +1,107 @@
+import { useEffect, useState } from "react";
 import { StatusBar } from "../../components/layout/StatusBar";
 import { closeSession } from "../../services/sessionService";
+import type { CommandButton } from "../../types/profiles";
 import type { SessionEvent, SessionId } from "../../types/session";
+import { CommandBar } from "../commands/CommandBar";
 import { TerminalView } from "../terminal/TerminalView";
-import type { Tab } from "./tabs";
+import { MAX_AUTO_RECONNECT, type Tab } from "./tabs";
 
 interface SessionPanelProps {
   tab: Tab;
   active: boolean;
   sidebarOpen: boolean;
+  buttons: CommandButton[];
   onToggleSidebar: () => void;
   onEvent: (tab: Tab, event: SessionEvent) => void;
   onSessionId: (tab: Tab, id: SessionId) => void;
   onRetry: (tab: Tab) => void;
+  onCancelReconnect: (tab: Tab) => void;
   onClose: (tab: Tab) => void;
   onEditProfile: (tab: Tab) => void;
+  onRunButton: (tab: Tab, button: CommandButton) => void;
+  onEditButton: (button?: CommandButton) => void;
+  onBroadcast: (tab: Tab) => void;
+  onPasteRequest: (tab: Tab, text: string, paste: () => void) => void;
 }
 
-/** One session: status bar, information banner and terminal. Hidden tabs stay
- * mounted (display: none) so their session keeps running. */
-export function SessionPanel({
-  tab,
-  active,
-  sidebarOpen,
-  onToggleSidebar,
-  onEvent,
-  onSessionId,
-  onRetry,
-  onClose,
-  onEditProfile,
-}: SessionPanelProps) {
+/** Seconds left before `at` (a Date.now() timestamp), refreshed every second. */
+function useCountdown(at: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (at === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [at]);
+  return at === null ? 0 : Math.max(0, Math.ceil((at - now) / 1000));
+}
+
+/** One session: status bar, command bar, information banner and terminal.
+ * Hidden tabs stay mounted (display: none) so their session keeps running. */
+export function SessionPanel(props: SessionPanelProps) {
+  const { tab, active } = props;
   const { status } = tab;
+  const secondsLeft = useCountdown(tab.reconnectAt);
+  const connected = status.kind === "connected";
+
   return (
     <div className={`session-panel ${active ? "" : "inactive"}`} role="tabpanel">
       <StatusBar
         title={tab.target.title}
         status={status}
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={onToggleSidebar}
+        sidebarOpen={props.sidebarOpen}
+        onToggleSidebar={props.onToggleSidebar}
         onDisconnect={() => {
           if (tab.sessionId !== null) void closeSession(tab.sessionId).catch(() => {});
         }}
-        onCloseTab={() => onClose(tab)}
+        onCloseTab={() => props.onClose(tab)}
       />
-      {(status.kind === "failed" || status.kind === "closed") && (
-        <div
-          className={`banner ${status.kind === "failed" || status.byRemote ? "warning" : ""}`}
-          role="status"
-        >
-          <span>{status.kind === "failed" ? status.message : status.reason}</span>
-          <button className="link" onClick={() => onRetry(tab)}>
-            {status.kind === "failed" ? "Réessayer" : "Se reconnecter"}
+      <CommandBar
+        buttons={props.buttons}
+        enabled={connected}
+        onRun={(button) => props.onRunButton(tab, button)}
+        onEdit={(button) => props.onEditButton(button)}
+        onAdd={() => props.onEditButton()}
+        onBroadcast={() => props.onBroadcast(tab)}
+      />
+      {tab.reconnectAt !== null ? (
+        <div className="banner warning" role="status">
+          <span>
+            Connexion perdue. Reconnexion automatique dans {secondsLeft} s (tentative{" "}
+            {tab.autoRetries + 1}/{MAX_AUTO_RECONNECT}).
+          </span>
+          <button className="link" onClick={() => props.onRetry(tab)}>
+            Reconnecter maintenant
           </button>
-          {status.kind === "failed" && tab.target.profile && (
-            <button className="link" onClick={() => onEditProfile(tab)}>
-              Modifier le profil
-            </button>
-          )}
+          <button className="link" onClick={() => props.onCancelReconnect(tab)}>
+            Annuler
+          </button>
         </div>
+      ) : (
+        (status.kind === "failed" || status.kind === "closed") && (
+          <div
+            className={`banner ${status.kind === "failed" || status.byRemote ? "warning" : ""}`}
+            role="status"
+          >
+            <span>{status.kind === "failed" ? status.message : status.reason}</span>
+            <button className="link" onClick={() => props.onRetry(tab)}>
+              {status.kind === "failed" ? "Réessayer" : "Se reconnecter"}
+            </button>
+            {status.kind === "failed" && tab.target.profile && (
+              <button className="link" onClick={() => props.onEditProfile(tab)}>
+                Modifier le profil
+              </button>
+            )}
+          </div>
+        )
       )}
       <TerminalView
         key={tab.attempt}
         open={tab.target.open}
         active={active}
-        onEvent={(event) => onEvent(tab, event)}
-        onSessionId={(id) => onSessionId(tab, id)}
+        onEvent={(event) => props.onEvent(tab, event)}
+        onSessionId={(id) => props.onSessionId(tab, id)}
+        onPasteRequest={(text, paste) => props.onPasteRequest(tab, text, paste)}
       />
     </div>
   );

@@ -65,7 +65,8 @@ export type SessionEvent =
   | { type: "hostKeyChanged"; mismatch: HostKeyMismatch }
   | { type: "connected"; info: ConnectionInfo }
   | { type: "failed"; code: string; message: string }
-  | { type: "closed"; reason: string; byRemote: boolean };
+  /** `lost`: connection lost (network), as opposed to a normal end (`exit`). */
+  | { type: "closed"; reason: string; byRemote: boolean; lost: boolean };
 
 /** Error shape returned by every Tauri command (`AppError` in Rust). */
 export interface AppError {

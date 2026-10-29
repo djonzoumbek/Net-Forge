@@ -30,6 +30,10 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   );
   const [keyPath, setKeyPath] = useState(profile?.keyPath ?? "~/.ssh/id_ed25519");
   const [legacyMode, setLegacyMode] = useState(profile?.legacyMode ?? false);
+  const [keepaliveSecs, setKeepaliveSecs] = useState(String(profile?.keepaliveSecs ?? 30));
+  const [autoReconnect, setAutoReconnect] = useState(profile?.autoReconnect ?? false);
+  const [pagerAutoReply, setPagerAutoReply] = useState(profile?.pagerAutoReply ?? false);
+  const [loginCommands, setLoginCommands] = useState(profile?.loginCommands ?? "");
   const [saveSecret, setSaveSecret] = useState(false);
   const [savedAction, setSavedAction] = useState<SavedSecretAction>("keep");
   const [secret, setSecret] = useState("");
@@ -63,6 +67,11 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
       setError("Le port doit être un entier entre 1 et 65535.");
       return;
     }
+    const keepalive = Number(keepaliveSecs);
+    if (!Number.isInteger(keepalive) || keepalive < 0 || keepalive > 3600) {
+      setError("Keepalive : nombre de secondes entre 0 (désactivé) et 3600.");
+      return;
+    }
     setSaving(true);
     try {
       await onSave({
@@ -76,6 +85,10 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         keyPath: ssh && authMethod === "keyFile" ? keyPath : null,
         legacyMode: ssh && legacyMode,
         secret: secretChange(),
+        keepaliveSecs: keepalive,
+        autoReconnect,
+        pagerAutoReply,
+        loginCommands,
       });
     } catch (e) {
       setError(toAppError(e).message);
@@ -227,6 +240,55 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
             )}
           </>
         )}
+
+        <fieldset className="section">
+          <legend>Session</legend>
+          <div className="field-row">
+            <label className="field port">
+              <span>Keepalive (s)</span>
+              <input
+                value={keepaliveSecs}
+                onChange={(e) => setKeepaliveSecs(e.target.value)}
+                inputMode="numeric"
+                title="0 = désactivé"
+              />
+            </label>
+            <p className="hint grow">
+              Garde la session ouverte à travers pare-feu et NAT, et détecte une connexion
+              coupée. 0 pour désactiver.
+            </p>
+          </div>
+          <label className="checkbox">
+            <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} />
+            Reconnexion automatique si la connexion est perdue (jamais après <code>exit</code>)
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={pagerAutoReply} onChange={(e) => setPagerAutoReply(e.target.checked)} />
+            Répondre automatiquement au pager (<code>--More--</code>, <code>---- More ----</code>)
+          </label>
+          <label className="field">
+            <span>Commandes envoyées à la première invite (une par ligne)</span>
+            <textarea
+              rows={3}
+              value={loginCommands}
+              onChange={(e) => setLoginCommands(e.target.value)}
+              spellCheck={false}
+              placeholder="terminal length 0"
+            />
+          </label>
+          <div className="presets">
+            <span className="hint">Désactiver la pagination :</span>
+            <button type="button" onClick={() => setLoginCommands("terminal length 0")}>
+              Cisco
+            </button>
+            <button type="button" onClick={() => setLoginCommands("screen-length 0 temporary")}>
+              Huawei
+            </button>
+          </div>
+          <p className="hint warning-text">
+            Ces commandes sont enregistrées en clair : n'y mets jamais de mot de passe.
+          </p>
+        </fieldset>
 
         <div className="dialog-actions">
           <button type="button" onClick={onCancel}>

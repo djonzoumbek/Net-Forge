@@ -36,7 +36,22 @@ export interface Tab {
   attempt: number;
   sessionId: SessionId | null;
   status: TabStatus;
+  /** Automatic reconnections used since the connection was lost (0 = none). */
+  autoRetries: number;
+  /** Next automatic reconnection, as a `Date.now()` timestamp. */
+  reconnectAt: number | null;
 }
+
+/** Waits between automatic reconnections, in seconds; its length is the maximum. */
+const RECONNECT_DELAYS = [2, 5, 10, 20, 30];
+
+/** Delay before automatic reconnection number `attempt` (1-based), or null when
+ * the attempts are exhausted. */
+export function reconnectDelay(attempt: number): number | null {
+  return attempt >= 1 && attempt <= RECONNECT_DELAYS.length ? RECONNECT_DELAYS[attempt - 1] : null;
+}
+
+export const MAX_AUTO_RECONNECT = RECONNECT_DELAYS.length;
 
 export interface TabsState {
   tabs: Tab[];
@@ -50,7 +65,10 @@ export type TabsAction =
   | { type: "activate"; key: number | null }
   | { type: "cycle"; step: 1 | -1 }
   | { type: "close"; key: number }
-  | { type: "retry"; key: number; target?: SessionTarget }
+  /** `auto`: automatic reconnection (keeps counting attempts). */
+  | { type: "retry"; key: number; target?: SessionTarget; auto?: boolean }
+  | { type: "scheduleReconnect"; key: number; at: number }
+  | { type: "cancelReconnect"; key: number }
   | { type: "sessionId"; key: number; attempt: number; id: SessionId }
   | { type: "event"; key: number; attempt: number; event: SessionEvent }
   | { type: "hostKeyAnswered"; key: number }
@@ -86,6 +104,8 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         attempt: 0,
         sessionId: null,
         status: { kind: "connecting" },
+        autoRetries: 0,
+        reconnectAt: null,
       };
       return { tabs: [...state.tabs, tab], active: tab.key, nextKey: state.nextKey + 1 };
     }
@@ -115,16 +135,26 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
         attempt: tab.attempt + 1,
         sessionId: null,
         status: { kind: "connecting" },
+        autoRetries: action.auto ? tab.autoRetries + 1 : 0,
+        reconnectAt: null,
       }));
+    case "scheduleReconnect":
+      return updateTab(state, action.key, (tab) => ({ ...tab, reconnectAt: action.at }));
+    case "cancelReconnect":
+      return updateTab(state, action.key, (tab) => ({ ...tab, reconnectAt: null, autoRetries: 0 }));
     case "sessionId":
       return updateTab(state, action.key, (tab) =>
         tab.attempt === action.attempt ? { ...tab, sessionId: action.id } : tab,
       );
     case "event":
       // Events of a previous attempt (late messages) must not overwrite the current one.
-      return updateTab(state, action.key, (tab) =>
-        tab.attempt === action.attempt ? { ...tab, status: statusFromEvent(action.event) } : tab,
-      );
+      return updateTab(state, action.key, (tab) => {
+        if (tab.attempt !== action.attempt) return tab;
+        const status = statusFromEvent(action.event);
+        // Connected again: the outage is over.
+        const autoRetries = status.kind === "connected" ? 0 : tab.autoRetries;
+        return { ...tab, status, autoRetries };
+      });
     case "hostKeyAnswered":
       return updateTab(state, action.key, (tab) => ({ ...tab, status: { kind: "connecting" } }));
     case "dismissMismatch":

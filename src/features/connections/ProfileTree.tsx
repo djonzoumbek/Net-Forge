@@ -32,8 +32,10 @@ export function ProfileTree({ tree, error, onQuickConnect, ...actions }: Profile
 
   return (
     <nav className="sidebar" aria-label="Profils">
-      <div className="sidebar-header">
-        <span className="brand">NetForge</span>
+      <div className="sidebar-header" data-tauri-drag-region>
+        <span className="brand" data-tauri-drag-region>
+          NetForge
+        </span>
       </div>
       <div className="sidebar-actions">
         <button onClick={() => actions.onNewProfile(null)}>+ Profil</button>
