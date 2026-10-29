@@ -8,6 +8,9 @@ interface StatusBarProps {
   onToggleSidebar: () => void;
   onDisconnect: () => void;
   onCloseTab: () => void;
+  /** SFTP panel toggle, shown for connected SSH sessions only. */
+  filesOpen: boolean;
+  onToggleFiles: () => void;
 }
 
 const statusText: Record<TabStatus["kind"], string> = {
@@ -24,6 +27,13 @@ function SecurityBadges({ info }: { info: ConnectionInfo }) {
   const details = algorithms
     ? `Échange de clés : ${algorithms.kex}\nClé d'hôte : ${algorithms.hostKey}\nChiffrement : ${algorithms.cipher}\nMAC : ${algorithms.mac}`
     : undefined;
+  if (info.protocol === "serial") {
+    return (
+      <span className="badge neutral" title="Câble console local : pas de réseau, rien à chiffrer.">
+        Série
+      </span>
+    );
+  }
   return (
     <>
       {info.encrypted ? (
@@ -47,7 +57,9 @@ function SecurityBadges({ info }: { info: ConnectionInfo }) {
   );
 }
 
-export function StatusBar({ title, status, sidebarOpen, onToggleSidebar, onDisconnect, onCloseTab }: StatusBarProps) {
+export function StatusBar(props: StatusBarProps) {
+  const { title, status, sidebarOpen, onToggleSidebar, onDisconnect, onCloseTab } = props;
+  const sftpAvailable = status.kind === "connected" && status.info.protocol === "ssh";
   const live = status.kind === "connecting" || status.kind === "hostKey" || status.kind === "connected";
   return (
     <header className="status-bar">
@@ -74,6 +86,16 @@ export function StatusBar({ title, status, sidebarOpen, onToggleSidebar, onDisco
         </span>
       )}
       <span className="spacer" />
+      {sftpAvailable && (
+        <button
+          className={props.filesOpen ? "toggled" : ""}
+          aria-pressed={props.filesOpen}
+          onClick={props.onToggleFiles}
+          title="Transfert de fichiers (SFTP) sur cette connexion"
+        >
+          Fichiers
+        </button>
+      )}
       {live ? (
         <button onClick={onDisconnect}>{status.kind === "connected" ? "Déconnecter" : "Annuler"}</button>
       ) : (

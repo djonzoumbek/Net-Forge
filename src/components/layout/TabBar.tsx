@@ -85,6 +85,11 @@ export function TabBar({ tabs, active, onActivate, onClose, onMove }: TabBarProp
                   clair
                 </span>
               )}
+              {tab.target.protocol === "serial" && (
+                <span className="badge neutral small" title="Console série (câble local)">
+                  série
+                </span>
+              )}
               {legacy && (
                 <span className="badge legacy small" title="Algorithmes legacy négociés">
                   legacy

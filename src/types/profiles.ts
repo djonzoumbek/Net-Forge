@@ -1,6 +1,29 @@
 // Mirrors src-tauri/src/persistence/profiles.rs.
 
-export type Protocol = "ssh" | "telnet";
+/** "serial": `host` is the device path (/dev/ttyUSB0), `port` is 0. */
+export type Protocol = "ssh" | "telnet" | "serial";
+
+export type Parity = "none" | "odd" | "even";
+/** software: XON/XOFF, hardware: RTS/CTS. */
+export type FlowControl = "none" | "software" | "hardware";
+
+/** Serial line settings (mirrors transport/serial/mod.rs). */
+export interface SerialSettings {
+  baudRate: number;
+  dataBits: number;
+  parity: Parity;
+  stopBits: number;
+  flowControl: FlowControl;
+}
+
+/** Cisco / Huawei console: 9600 8N1, no flow control. */
+export const defaultSerial: SerialSettings = {
+  baudRate: 9600,
+  dataBits: 8,
+  parity: "none",
+  stopBits: 1,
+  flowControl: "none",
+};
 
 /** "none": Telnet, the device asks for credentials in the terminal. */
 export type AuthMethod = "none" | "password" | "keyFile" | "agent";
@@ -24,6 +47,7 @@ export interface Profile extends SessionOptions {
   /** A password or key passphrase is saved in the system keyring. */
   hasSavedSecret: boolean;
   legacyMode: boolean;
+  serial: SerialSettings;
 }
 
 /** How a session of the profile behaves once connected. */
@@ -63,6 +87,7 @@ export interface ProfileInput extends SessionOptions {
   keyPath: string | null;
   legacyMode: boolean;
   secret: SecretChange;
+  serial: SerialSettings;
 }
 
 export interface CommandButton {

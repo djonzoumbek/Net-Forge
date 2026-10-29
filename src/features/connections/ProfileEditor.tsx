@@ -1,8 +1,18 @@
 import { useState, type FormEvent } from "react";
 import { Modal } from "../../components/dialogs/Modal";
 import { toAppError } from "../../services/sessionService";
-import type { AuthMethod, LogMode, Profile, ProfileInput, Protocol, SecretChange } from "../../types/profiles";
-import { defaultPort } from "./ConnectionForm";
+import {
+  defaultSerial,
+  type AuthMethod,
+  type LogMode,
+  type Profile,
+  type ProfileInput,
+  type Protocol,
+  type SecretChange,
+  type SerialSettings,
+} from "../../types/profiles";
+import { SerialFields } from "../serial/SerialFields";
+import { defaultPort, protocolLabels } from "./ConnectionForm";
 import { flattenFolders, type Tree } from "./tree";
 
 interface ProfileEditorProps {
@@ -22,8 +32,12 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   const [name, setName] = useState(profile?.name ?? "");
   const [folderId, setFolderId] = useState<number | null>(profile?.folderId ?? defaultFolderId);
   const [protocol, setProtocol] = useState<Protocol>(profile?.protocol ?? "ssh");
-  const [host, setHost] = useState(profile?.host ?? "");
-  const [port, setPort] = useState(String(profile?.port ?? 22));
+  const [host, setHost] = useState(profile?.protocol === "serial" ? "" : (profile?.host ?? ""));
+  // Serial profiles keep the device path in `host`: separate state, so that
+  // switching protocol back and forth does not mix a hostname and a device.
+  const [device, setDevice] = useState(profile?.protocol === "serial" ? profile.host : "");
+  const [serial, setSerial] = useState<SerialSettings>(profile?.serial ?? defaultSerial);
+  const [port, setPort] = useState(profile && profile.protocol !== "serial" ? String(profile.port) : "22");
   const [username, setUsername] = useState(profile?.username ?? "");
   const [authMethod, setAuthMethod] = useState<SshAuthMethod>(
     profile && profile.authMethod !== "none" ? profile.authMethod : "password",
@@ -43,10 +57,11 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
 
   const hasSaved = profile?.hasSavedSecret ?? false;
   const ssh = protocol === "ssh";
+  const isSerial = protocol === "serial";
 
   function changeProtocol(next: Protocol) {
     // Keep a custom port; swap only the default one.
-    if (port === defaultPort[protocol]) setPort(defaultPort[next]);
+    if (next !== "serial" && (port === defaultPort[protocol] || port === "")) setPort(defaultPort[next]);
     setProtocol(next);
   }
   const secretLabel = authMethod === "password" ? "mot de passe" : "passphrase";
@@ -63,12 +78,12 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const portNumber = Number(port);
-    if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
+    const portNumber = isSerial ? 0 : Number(port);
+    if (!isSerial && (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535)) {
       setError("Le port doit être un entier entre 1 et 65535.");
       return;
     }
-    const keepalive = Number(keepaliveSecs);
+    const keepalive = isSerial ? 0 : Number(keepaliveSecs);
     if (!Number.isInteger(keepalive) || keepalive < 0 || keepalive > 3600) {
       setError("Keepalive : nombre de secondes entre 0 (désactivé) et 3600.");
       return;
@@ -79,7 +94,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         folderId,
         name,
         protocol,
-        host,
+        host: isSerial ? device : host,
         port: portNumber,
         username: ssh ? username : "",
         authMethod: ssh ? authMethod : "none",
@@ -87,10 +102,11 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         legacyMode: ssh && legacyMode,
         secret: secretChange(),
         keepaliveSecs: keepalive,
-        autoReconnect,
+        autoReconnect: autoReconnect && !isSerial,
         pagerAutoReply,
         loginCommands,
         sessionLog,
+        serial,
       });
     } catch (e) {
       setError(toAppError(e).message);
@@ -132,32 +148,34 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
 
         <fieldset className="auth-choice">
           <legend>Protocole</legend>
-          <label>
-            <input type="radio" checked={ssh} onChange={() => changeProtocol("ssh")} />
-            SSH
-          </label>
-          <label>
-            <input type="radio" checked={!ssh} onChange={() => changeProtocol("telnet")} />
-            Telnet
-          </label>
+          {protocolLabels.map(([value, label]) => (
+            <label key={value}>
+              <input type="radio" checked={protocol === value} onChange={() => changeProtocol(value)} />
+              {label}
+            </label>
+          ))}
         </fieldset>
-        {!ssh && (
+        {protocol === "telnet" && (
           <p className="hint warning-text">
             Telnet n'est pas chiffré. Aucun mot de passe n'est enregistré pour un profil Telnet :
             l'équipement le demande dans le terminal.
           </p>
         )}
 
-        <div className="field-row">
-          <label className="field grow">
-            <span>Hôte</span>
-            <input value={host} onChange={(e) => setHost(e.target.value)} spellCheck={false} />
-          </label>
-          <label className="field port">
-            <span>Port</span>
-            <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
-          </label>
-        </div>
+        {isSerial ? (
+          <SerialFields device={device} settings={serial} onDeviceChange={setDevice} onSettingsChange={setSerial} />
+        ) : (
+          <div className="field-row">
+            <label className="field grow">
+              <span>Hôte</span>
+              <input value={host} onChange={(e) => setHost(e.target.value)} spellCheck={false} />
+            </label>
+            <label className="field port">
+              <span>Port</span>
+              <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
+            </label>
+          </div>
+        )}
 
         {ssh && (
           <>
@@ -245,25 +263,29 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
 
         <fieldset className="section">
           <legend>Session</legend>
-          <div className="field-row">
-            <label className="field port">
-              <span>Keepalive (s)</span>
-              <input
-                value={keepaliveSecs}
-                onChange={(e) => setKeepaliveSecs(e.target.value)}
-                inputMode="numeric"
-                title="0 = désactivé"
-              />
-            </label>
-            <p className="hint grow">
-              Garde la session ouverte à travers pare-feu et NAT, et détecte une connexion
-              coupée. 0 pour désactiver.
-            </p>
-          </div>
-          <label className="checkbox">
-            <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} />
-            Reconnexion automatique si la connexion est perdue (jamais après <code>exit</code>)
-          </label>
+          {!isSerial && (
+            <>
+              <div className="field-row">
+                <label className="field port">
+                  <span>Keepalive (s)</span>
+                  <input
+                    value={keepaliveSecs}
+                    onChange={(e) => setKeepaliveSecs(e.target.value)}
+                    inputMode="numeric"
+                    title="0 = désactivé"
+                  />
+                </label>
+                <p className="hint grow">
+                  Garde la session ouverte à travers pare-feu et NAT, et détecte une connexion
+                  coupée. 0 pour désactiver.
+                </p>
+              </div>
+              <label className="checkbox">
+                <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} />
+                Reconnexion automatique si la connexion est perdue (jamais après <code>exit</code>)
+              </label>
+            </>
+          )}
           <label className="checkbox">
             <input type="checkbox" checked={pagerAutoReply} onChange={(e) => setPagerAutoReply(e.target.checked)} />
             Répondre automatiquement au pager (<code>--More--</code>, <code>---- More ----</code>)

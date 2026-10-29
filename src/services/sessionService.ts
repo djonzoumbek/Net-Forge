@@ -2,6 +2,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AppError,
+  SerialConnectRequest,
+  SerialPortEntry,
   SessionEvent,
   SessionId,
   SshConnectRequest,
@@ -52,6 +54,13 @@ export function telnetOpener(request: TelnetConnectRequest): SessionOpener {
   return (size, onData, onEvent) =>
     invoke<SessionId>("session_open_telnet", { request, size, ...channels(onData, onEvent) });
 }
+
+export function serialOpener(request: SerialConnectRequest): SessionOpener {
+  return (size, onData, onEvent) =>
+    invoke<SessionId>("session_open_serial", { request, size, ...channels(onData, onEvent) });
+}
+
+export const listSerialPorts = () => invoke<SerialPortEntry[]>("serial_ports");
 
 /** `secret`: password/passphrase typed by the user when none is saved. */
 export function profileOpener(profileId: number, secret?: string): SessionOpener {

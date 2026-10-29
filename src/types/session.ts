@@ -1,4 +1,5 @@
 // Types mirrored from the Rust side (src-tauri/src/sessions, commands, errors).
+import type { SerialSettings } from "./profiles";
 
 export type SessionId = number;
 
@@ -24,6 +25,20 @@ export interface SshConnectRequest {
 export interface TelnetConnectRequest {
   host: string;
   port: number;
+}
+
+export interface SerialConnectRequest {
+  /** e.g. /dev/ttyUSB0 */
+  device: string;
+  settings: SerialSettings;
+}
+
+/** A serial port found on the machine. */
+export interface SerialPortEntry {
+  path: string;
+  description: string;
+  /** false: opening it will be refused (not in the dialout group). */
+  accessible: boolean;
 }
 
 export interface HostKeyInfo {

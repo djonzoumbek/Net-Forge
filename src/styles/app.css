@@ -1063,3 +1063,184 @@ body.dragging * {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.35);
   pointer-events: none;
 }
+
+/* ---------- Phase 7: SFTP panel, serial ---------- */
+
+.badge.neutral {
+  color: var(--text);
+  background: var(--button-hover);
+}
+
+button.toggled {
+  border-color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Lines up a button with the inputs of a .field-row (below their label). */
+button.align-end {
+  align-self: flex-end;
+}
+
+.port-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.port-list button.link {
+  margin: 0;
+  font-family: "DejaVu Sans Mono", monospace;
+}
+
+.port-list button.link.current {
+  font-weight: 700;
+}
+
+/* Below the terminal: the terminal keeps the remaining height (and is
+   refitted, so the remote side gets the new size). */
+.sftp-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 38%;
+  min-height: 180px;
+  overflow: hidden;
+  background: var(--panel);
+  border-top: 2px solid var(--panel-border);
+}
+
+.sftp-panel.hidden {
+  display: none;
+}
+
+.sftp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.sftp-toolbar button {
+  padding: 3px 10px;
+  flex: none;
+}
+
+.sftp-toolbar input {
+  padding: 4px 8px;
+}
+
+.sftp-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-panel .form-error {
+  margin: 6px 10px;
+}
+
+.sftp-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sftp-list .hint {
+  padding: 8px 12px;
+}
+
+.sftp-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.sftp-list tr:hover {
+  background: var(--hover);
+}
+
+.sftp-list tr.dir {
+  cursor: pointer;
+}
+
+.sftp-list td {
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.sftp-list td.name {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+}
+
+.sftp-list td.size,
+.sftp-list td.perms {
+  color: var(--muted);
+  text-align: right;
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 0.8rem;
+}
+
+.sftp-list td.actions button {
+  padding: 0 8px;
+}
+
+.transfers {
+  max-height: 40%;
+  overflow: auto;
+  border-top: 1px solid var(--panel-border);
+}
+
+.transfers-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.transfer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+  font-size: 0.85rem;
+}
+
+.transfer-name {
+  flex: 0 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer progress {
+  flex: 1;
+  min-width: 60px;
+  accent-color: var(--accent);
+}
+
+.transfer-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.transfer.running .transfer-info {
+  flex: none;
+}
+
+.transfer-info.ok {
+  color: var(--ok);
+}
+
+.transfer button {
+  padding: 1px 10px;
+  font-size: 0.8rem;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Profile } from "../../types/profiles";
+import { defaultSerial, type Profile } from "../../types/profiles";
 import { buildTree, flattenFolders, isInsideFolder } from "./tree";
 
 const profile = (id: number, folderId: number | null): Profile => ({
@@ -19,6 +19,7 @@ const profile = (id: number, folderId: number | null): Profile => ({
   pagerAutoReply: false,
   loginCommands: "",
   sessionLog: "off",
+  serial: defaultSerial,
 });
 
 describe("buildTree", () => {

@@ -1,14 +1,23 @@
 import { useState, type FormEvent } from "react";
-import type { Protocol } from "../../types/profiles";
-import type { SshConnectRequest, TelnetConnectRequest } from "../../types/session";
+import { defaultSerial, type Protocol, type SerialSettings } from "../../types/profiles";
+import type { SerialConnectRequest, SshConnectRequest, TelnetConnectRequest } from "../../types/session";
+import { SerialFields } from "../serial/SerialFields";
 
 type AuthMethod = "password" | "keyFile" | "agent";
 
 export type QuickConnection =
   | { protocol: "ssh"; request: SshConnectRequest }
-  | { protocol: "telnet"; request: TelnetConnectRequest };
+  | { protocol: "telnet"; request: TelnetConnectRequest }
+  | { protocol: "serial"; request: SerialConnectRequest };
 
-export const defaultPort: Record<Protocol, string> = { ssh: "22", telnet: "23" };
+/** Serial has no network port (empty). */
+export const defaultPort: Record<Protocol, string> = { ssh: "22", telnet: "23", serial: "" };
+
+export const protocolLabels: [Protocol, string][] = [
+  ["ssh", "SSH"],
+  ["telnet", "Telnet"],
+  ["serial", "Série"],
+];
 
 export interface ConnectionDraft {
   protocol: Protocol;
@@ -18,6 +27,8 @@ export interface ConnectionDraft {
   method: AuthMethod;
   keyPath: string;
   legacy: boolean;
+  device: string;
+  serial: SerialSettings;
 }
 
 export const emptyDraft: ConnectionDraft = {
@@ -28,6 +39,8 @@ export const emptyDraft: ConnectionDraft = {
   method: "password",
   keyPath: "~/.ssh/id_ed25519",
   legacy: false,
+  device: "",
+  serial: defaultSerial,
 };
 
 interface ConnectionFormProps {
@@ -44,7 +57,7 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
   const [passphrase, setPassphrase] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
 
-  const update = (field: Exclude<keyof ConnectionDraft, "legacy" | "protocol">) => (value: string) =>
+  const update = (field: Exclude<keyof ConnectionDraft, "legacy" | "protocol" | "serial">) => (value: string) =>
     setDraft((d) => ({ ...d, [field]: value }));
 
   // Switching protocol also switches the port, unless the user typed a custom one.
@@ -55,9 +68,16 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
       port: d.port === defaultPort[d.protocol] ? defaultPort[protocol] : d.port,
     }));
   const ssh = draft.protocol === "ssh";
+  const serial = draft.protocol === "serial";
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (serial) {
+      if (!draft.device.trim()) return setValidation("Choisis le port série.");
+      setValidation(null);
+      onConnect({ protocol: "serial", request: { device: draft.device.trim(), settings: draft.serial } }, draft);
+      return;
+    }
     const port = Number(draft.port);
     if (!draft.host.trim()) return setValidation("Indique l'hôte.");
     if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -109,43 +129,52 @@ export function ConnectionForm({ initial, error, onConnect }: ConnectionFormProp
 
       <fieldset className="auth-choice">
         <legend>Protocole</legend>
-        <label>
-          <input type="radio" checked={ssh} onChange={() => setProtocol("ssh")} />
-          SSH
-        </label>
-        <label>
-          <input type="radio" checked={!ssh} onChange={() => setProtocol("telnet")} />
-          Telnet
-        </label>
+        {protocolLabels.map(([protocol, label]) => (
+          <label key={protocol}>
+            <input type="radio" checked={draft.protocol === protocol} onChange={() => setProtocol(protocol)} />
+            {label}
+          </label>
+        ))}
       </fieldset>
-      {!ssh && (
+      {draft.protocol === "telnet" && (
         <p className="hint warning-text">
           Telnet n'est pas chiffré : tout ce qui est tapé, mots de passe compris, circule en clair.
           À réserver aux consoles de labo (GNS3, EVE-NG) et aux réseaux de confiance.
         </p>
       )}
 
-      <div className="field-row">
-        <label className="field grow">
-          <span>Hôte</span>
-          <input
-            autoFocus
-            value={draft.host}
-            onChange={(e) => update("host")(e.target.value)}
-            placeholder="192.168.1.10 ou routeur.lab"
-            spellCheck={false}
-            autoCapitalize="off"
-          />
-        </label>
-        <label className="field port">
-          <span>Port</span>
-          <input
-            value={draft.port}
-            onChange={(e) => update("port")(e.target.value)}
-            inputMode="numeric"
-          />
-        </label>
-      </div>
+      {serial && (
+        <SerialFields
+          device={draft.device}
+          settings={draft.serial}
+          onDeviceChange={(device) => setDraft((d) => ({ ...d, device }))}
+          onSettingsChange={(settings) => setDraft((d) => ({ ...d, serial: settings }))}
+        />
+      )}
+
+      {!serial && (
+        <div className="field-row">
+          <label className="field grow">
+            <span>Hôte</span>
+            <input
+              autoFocus
+              value={draft.host}
+              onChange={(e) => update("host")(e.target.value)}
+              placeholder="192.168.1.10 ou routeur.lab"
+              spellCheck={false}
+              autoCapitalize="off"
+            />
+          </label>
+          <label className="field port">
+            <span>Port</span>
+            <input
+              value={draft.port}
+              onChange={(e) => update("port")(e.target.value)}
+              inputMode="numeric"
+            />
+          </label>
+        </div>
+      )}
 
       {ssh && (
         <>

@@ -38,11 +38,22 @@ import {
   profileOpener,
   replaceHostKey,
   sendSequence,
+  serialOpener,
   sshOpener,
   telnetOpener,
   toAppError,
 } from "./services/sessionService";
-import type { ButtonInput, CommandButton, Folder, Profile, ProfileInput } from "./types/profiles";
+import { deviceName, serialSummary } from "./features/serial/serial";
+import {
+  defaultSerial,
+  type ButtonInput,
+  type CommandButton,
+  type Folder,
+  type Profile,
+  type ProfileInput,
+  type Protocol,
+  type SerialSettings,
+} from "./types/profiles";
 import type { SessionEvent } from "./types/session";
 import "./styles/app.css";
 
@@ -66,14 +77,21 @@ const MAX_FONT_SIZE = 36;
 /** Failures worth another automatic attempt (the device may come back). */
 const NETWORK_FAILURES = new Set(["unreachable", "timeout", "host_not_found"]);
 
-function describe(protocol: "ssh" | "telnet", host: string, port: number, username?: string): string {
+function describe(
+  protocol: Protocol,
+  host: string,
+  port: number,
+  username?: string,
+  serial: SerialSettings = defaultSerial,
+): string {
+  if (protocol === "serial") return `${host} (${serialSummary(serial)})`;
   return protocol === "telnet" ? `telnet://${host}:${port}` : `${username}@${host}:${port}`;
 }
 
 function profileTarget(profile: Profile, secret?: string, save = false): SessionTarget {
   return {
     label: profile.name,
-    title: `${profile.name} — ${describe(profile.protocol, profile.host, profile.port, profile.username)}`,
+    title: `${profile.name} — ${describe(profile.protocol, profile.host, profile.port, profile.username, profile.serial)}`,
     protocol: profile.protocol,
     open: profileOpener(profile.id, secret),
     profile,
@@ -82,6 +100,15 @@ function profileTarget(profile: Profile, secret?: string, save = false): Session
 }
 
 function quickTarget(connection: QuickConnection): SessionTarget {
+  if (connection.protocol === "serial") {
+    const { device, settings } = connection.request;
+    return {
+      label: deviceName(device),
+      title: describe("serial", device, 0, undefined, settings),
+      protocol: "serial",
+      open: serialOpener(connection.request),
+    };
+  }
   const { host, port } = connection.request;
   if (connection.protocol === "telnet") {
     return {

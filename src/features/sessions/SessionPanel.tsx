@@ -5,6 +5,7 @@ import type { CommandButton } from "../../types/profiles";
 import type { SessionEvent, SessionId } from "../../types/session";
 import { CommandBar } from "../commands/CommandBar";
 import { TerminalView, type TerminalAppearance } from "../terminal/TerminalView";
+import { SftpPanel } from "../transfers/SftpPanel";
 import { MAX_AUTO_RECONNECT, type Tab } from "./tabs";
 
 interface SessionPanelProps {
@@ -47,6 +48,11 @@ export function SessionPanel(props: SessionPanelProps) {
   const { status } = tab;
   const secondsLeft = useCountdown(tab.reconnectAt);
   const connected = status.kind === "connected";
+  // SFTP panel: mounted on first opening, then only hidden, so that running
+  // transfers keep their progress display when it is closed.
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [filesMounted, setFilesMounted] = useState(false);
+  const sftpSession = connected && status.info.protocol === "ssh" ? tab.sessionId : null;
 
   return (
     <div className={`session-panel ${active ? "" : "inactive"}`} role="tabpanel">
@@ -59,6 +65,11 @@ export function SessionPanel(props: SessionPanelProps) {
           if (tab.sessionId !== null) void closeSession(tab.sessionId).catch(() => {});
         }}
         onCloseTab={() => props.onClose(tab)}
+        filesOpen={filesOpen}
+        onToggleFiles={() => {
+          setFilesMounted(true);
+          setFilesOpen((open) => !open);
+        }}
       />
       <CommandBar
         buttons={props.buttons}
@@ -110,6 +121,10 @@ export function SessionPanel(props: SessionPanelProps) {
         searchToken={props.searchToken}
         onSearchClose={props.onSearchClose}
       />
+      {filesMounted && sftpSession !== null && (
+        // New session (reconnection): new SFTP channel, fresh panel.
+        <SftpPanel key={sftpSession} sessionId={sftpSession} visible={filesOpen} />
+      )}
     </div>
   );
 }
