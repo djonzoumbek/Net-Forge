@@ -1,6 +1,7 @@
 mod commands;
 mod errors;
 mod persistence;
+mod platform;
 mod security;
 mod sessions;
 mod transfers;
@@ -26,19 +27,22 @@ fn init_logging() {
 }
 
 /// Opens the database and known_hosts in the app data directory
-/// (`~/.local/share/dev.kamis.netforge/`), restricted to mode 0700.
+/// (Linux: `~/.local/share/dev.kamis.netforge/`, mode 0700; Windows:
+/// `%APPDATA%\dev.kamis.netforge\`).
 fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::fs::PermissionsExt;
-
     let data_dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     // Also when the directory already exists (WebKit may have created it first).
-    std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700))?;
+    platform::restrict(&data_dir, true)?;
     tracing::info!(dir = %data_dir.display(), "data directory");
 
     let database = Database::open(&data_dir.join("netforge.db"))?;
-    let user_known_hosts =
-        std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".ssh/known_hosts"));
+    // `~/.ssh/known_hosts` on Linux, `%USERPROFILE%\.ssh\known_hosts` on Windows.
+    let user_known_hosts: Option<PathBuf> = app
+        .path()
+        .home_dir()
+        .ok()
+        .map(|home| home.join(".ssh").join("known_hosts"));
     let known_hosts = KnownHosts::new(data_dir.join("known_hosts"), user_known_hosts);
 
     app.manage(database);
@@ -46,6 +50,26 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(Arc::new(Secrets::system()));
     app.manage(SessionManager::default());
     app.manage(transfers::TransferManager::default());
+    create_main_window(app)?;
+    Ok(())
+}
+
+/// The window is described in tauri.conf.json (`"create": false`) but built here:
+/// clipboard access can only be enabled from Rust. Without it, WebKitGTK refuses
+/// `navigator.clipboard.readText()`, so Ctrl+Shift+V and right-click paste fail.
+/// Acceptable here: the page only runs our own code (strict CSP, no remote content).
+fn create_main_window(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == "main")
+        .ok_or("fenêtre \"main\" absente de tauri.conf.json")?
+        .clone();
+    tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .enable_clipboard_access()
+        .build()?;
     Ok(())
 }
 

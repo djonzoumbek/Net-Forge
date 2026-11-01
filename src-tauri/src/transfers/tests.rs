@@ -168,11 +168,14 @@ async fn upload_then_download_round_trip_with_progress() {
         std::fs::read(&back).unwrap() == content,
         "identical content"
     );
-    use std::os::unix::fs::PermissionsExt;
-    assert_eq!(
-        std::fs::metadata(&back).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&back).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     assert!(!local.join("back.bin.netforge-part").exists());
 
     sftp.remove_file(remote_join(&remote_dir, "image.bin"))

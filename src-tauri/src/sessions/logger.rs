@@ -5,7 +5,6 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
@@ -41,9 +40,7 @@ impl SessionLogger {
     /// the writer thread.
     pub fn start(config: &LogConfig) -> Result<Self, AppError> {
         let storage = |e: std::io::Error| AppError::Storage(format!("journal de session : {e}"));
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
+        crate::platform::private_dir(fs::DirBuilder::new().recursive(true))
             .create(&config.dir)
             .map_err(storage)?;
         let now = chrono::Local::now();
@@ -54,10 +51,7 @@ impl SessionLogger {
         );
         let path = config.dir.join(name);
         // create_new: never append to (or overwrite) an existing file.
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
+        let file = crate::platform::private_file(OpenOptions::new().write(true).create_new(true))
             .open(&path)
             .map_err(storage)?;
         let mut out = BufWriter::new(file);
@@ -411,6 +405,7 @@ mod tests {
         assert_eq!(safe_file_name("///"), "session");
     }
 
+    #[cfg(unix)]
     #[test]
     fn writes_a_private_readable_text_log() {
         use std::os::unix::fs::PermissionsExt;

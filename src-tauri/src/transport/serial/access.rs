@@ -7,7 +7,14 @@
 //!
 //! Everything is read from `/etc/group` and `/proc/self/status`: no extra
 //! dependency, and the pure functions below are unit-tested.
+//!
+//! On Windows, COM ports have no such groups: "access denied" means that another
+//! program holds the port.
 
+// The parsing helpers are only called on Linux (they stay compiled and tested).
+#![cfg_attr(not(unix), allow(dead_code))]
+
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -92,6 +99,7 @@ pub fn diagnose(
     }
 }
 
+#[cfg(unix)]
 fn read_ids() -> ProcessIds {
     std::fs::read_to_string("/proc/self/status")
         .map(|s| parse_proc_status(&s))
@@ -99,12 +107,29 @@ fn read_ids() -> ProcessIds {
 }
 
 /// `None` when the file cannot be inspected (it may not exist).
+#[cfg(unix)]
 pub fn accessible(device: &Path) -> Option<bool> {
     let meta = std::fs::metadata(device).ok()?;
     Some(can_open(meta.mode(), meta.uid(), meta.gid(), &read_ids()))
 }
 
+/// Windows cannot tell in advance: the port is only checked when opened.
+#[cfg(not(unix))]
+pub fn accessible(_device: &Path) -> Option<bool> {
+    None
+}
+
+#[cfg(not(unix))]
+pub fn permission_message(device: &Path) -> String {
+    format!(
+        "Accès refusé à {} : le port est probablement ouvert par un autre programme \
+         (PuTTY, une autre session NetForge…). Ferme-le puis réessaie.",
+        device.display()
+    )
+}
+
 /// Builds the explanation for `device` from the real system files.
+#[cfg(unix)]
 pub fn permission_message(device: &Path) -> String {
     let display = device.display().to_string();
     let gid = std::fs::metadata(device).map(|m| m.gid()).ok();

@@ -219,14 +219,15 @@ pub async fn download(
     let mut part_name = local.as_os_str().to_owned();
     part_name.push(PART_SUFFIX);
     let part = PathBuf::from(part_name);
-    let mut target = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&part)
-        .await
-        .map_err(|e| local_error(&part, e))?;
+    let mut target = crate::platform::private_file_async(
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true),
+    )
+    .open(&part)
+    .await
+    .map_err(|e| local_error(&part, e))?;
 
     let copied = async {
         let mut progress = Progress::new(sink, total);

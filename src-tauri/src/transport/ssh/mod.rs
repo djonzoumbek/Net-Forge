@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use russh::client::{self, DisconnectReason};
 use russh::keys::agent::AgentIdentity;
-use russh::keys::agent::client::AgentClient;
+use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use tokio::sync::{oneshot, watch};
@@ -402,6 +402,33 @@ fn auth_result(result: client::AuthResult) -> Result<(), AppError> {
     }
 }
 
+/// The agent's stream type depends on the OS: `dynamic()` boxes it so that the
+/// rest of the authentication is written once.
+type Agent = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
+
+/// Linux: the Unix socket named by `SSH_AUTH_SOCK` (or `socket`, in tests).
+#[cfg(unix)]
+async fn connect_agent(socket: Option<PathBuf>) -> Result<Agent, russh::keys::Error> {
+    let client = match socket {
+        Some(path) => AgentClient::connect_uds(path).await?,
+        None => AgentClient::connect_env().await?,
+    };
+    Ok(client.dynamic())
+}
+
+/// Windows: the OpenSSH agent's named pipe (service "OpenSSH Authentication
+/// Agent"), then Pageant (PuTTY) if that service is not running.
+#[cfg(windows)]
+async fn connect_agent(socket: Option<PathBuf>) -> Result<Agent, russh::keys::Error> {
+    let pipe = socket
+        .map(PathBuf::into_os_string)
+        .unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".into());
+    match AgentClient::connect_named_pipe(&pipe).await {
+        Ok(client) => Ok(client.dynamic()),
+        Err(_) => Ok(AgentClient::connect_pageant().await?.dynamic()),
+    }
+}
+
 /// Tries each key of the SSH agent in turn. The private keys never leave the
 /// agent: it only signs the authentication challenge for us.
 async fn authenticate_with_agent(
@@ -409,11 +436,7 @@ async fn authenticate_with_agent(
     username: String,
     socket: Option<PathBuf>,
 ) -> Result<client::AuthResult, AppError> {
-    let connected = match socket {
-        Some(path) => AgentClient::connect_uds(path).await,
-        None => AgentClient::connect_env().await,
-    };
-    let mut agent = connected.map_err(|e| {
+    let mut agent = connect_agent(socket).await.map_err(|e| {
         AppError::Agent(match e {
             russh::keys::Error::EnvVar(_) => {
                 "aucun agent SSH détecté (variable SSH_AUTH_SOCK absente).".into()

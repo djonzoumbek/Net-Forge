@@ -226,8 +226,11 @@ impl ProfileInput {
         }
         self.options.validate()?;
         if self.protocol == Protocol::Serial {
-            if !self.host.starts_with("/dev/") || self.host.len() > 255 {
-                return invalid("port série invalide (ex. /dev/ttyUSB0).");
+            if !crate::platform::is_serial_device(&self.host) {
+                return Err(AppError::InvalidInput(format!(
+                    "port série invalide (ex. {}).",
+                    crate::platform::SERIAL_EXAMPLE
+                )));
             }
             self.serial = self.serial.validate()?;
             // A local cable: no network port, no authentication, no keepalive or

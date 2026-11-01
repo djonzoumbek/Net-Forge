@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0003_session_options_and_buttons.sql"),
     include_str!("../../migrations/0004_session_logs_and_settings.sql"),
     include_str!("../../migrations/0005_serial_profiles.sql"),
+    include_str!("../../migrations/0006_clipboard_settings.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between
@@ -116,8 +117,7 @@ fn migrate(conn: &mut Connection) -> Result<(), AppError> {
 
 /// The database lists the hosts you administer: readable by you only.
 fn restrict_permissions(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+    if let Err(e) = crate::platform::restrict(path, false) {
         tracing::warn!("cannot restrict database permissions: {e}");
     }
 }

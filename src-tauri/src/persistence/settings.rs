@@ -24,6 +24,12 @@ pub struct AppSettings {
     pub font_size: u16,
     /// Session logs directory; empty = default (~/Documents/NetForge/logs).
     pub log_dir: String,
+    /// A mouse selection is copied to the clipboard at once.
+    pub copy_on_select: bool,
+    /// A right click in the terminal pastes the clipboard.
+    pub right_click_paste: bool,
+    /// Ctrl+V pastes (otherwise it sends ^V to the remote shell).
+    pub ctrl_v_paste: bool,
 }
 
 impl AppSettings {
@@ -59,7 +65,9 @@ impl AppSettings {
 
 pub fn get(conn: &Connection) -> Result<AppSettings, AppError> {
     conn.query_row(
-        "SELECT scrollback, theme, font_family, font_size, log_dir FROM settings WHERE id = 1",
+        "SELECT scrollback, theme, font_family, font_size, log_dir,
+                copy_on_select, right_click_paste, ctrl_v_paste
+         FROM settings WHERE id = 1",
         [],
         |r| {
             Ok(AppSettings {
@@ -68,6 +76,9 @@ pub fn get(conn: &Connection) -> Result<AppSettings, AppError> {
                 font_family: r.get(2)?,
                 font_size: r.get(3)?,
                 log_dir: r.get(4)?,
+                copy_on_select: r.get(5)?,
+                right_click_paste: r.get(6)?,
+                ctrl_v_paste: r.get(7)?,
             })
         },
     )
@@ -77,9 +88,19 @@ pub fn get(conn: &Connection) -> Result<AppSettings, AppError> {
 pub fn update(conn: &Connection, settings: AppSettings) -> Result<AppSettings, AppError> {
     let s = settings.validate()?;
     conn.execute(
-        "UPDATE settings SET scrollback = ?1, theme = ?2, font_family = ?3, font_size = ?4, log_dir = ?5
+        "UPDATE settings SET scrollback = ?1, theme = ?2, font_family = ?3, font_size = ?4,
+                log_dir = ?5, copy_on_select = ?6, right_click_paste = ?7, ctrl_v_paste = ?8
          WHERE id = 1",
-        params![s.scrollback, s.theme, s.font_family, s.font_size, s.log_dir],
+        params![
+            s.scrollback,
+            s.theme,
+            s.font_family,
+            s.font_size,
+            s.log_dir,
+            s.copy_on_select,
+            s.right_click_paste,
+            s.ctrl_v_paste
+        ],
     )
     .map_err(db_error)?;
     get(conn)
@@ -100,6 +121,7 @@ mod tests {
                 "enough for the 10 000-line search criterion"
             );
             assert_eq!(defaults.theme, "netforge-dark");
+            assert!(defaults.copy_on_select && defaults.right_click_paste && defaults.ctrl_v_paste);
 
             let changed = AppSettings {
                 scrollback: 50_000,
@@ -107,6 +129,9 @@ mod tests {
                 font_family: " Ubuntu Mono ".into(),
                 font_size: 16,
                 log_dir: "/tmp/netforge-logs".into(),
+                copy_on_select: false,
+                right_click_paste: true,
+                ctrl_v_paste: false,
             };
             let saved = update(conn, changed)?;
             assert_eq!(saved.font_family, "Ubuntu Mono");

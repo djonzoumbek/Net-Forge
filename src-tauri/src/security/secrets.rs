@@ -1,5 +1,6 @@
-//! Secrets (passwords, key passphrases) stored in the system keyring
-//! (GNOME Keyring / KWallet through the freedesktop Secret Service API).
+//! Secrets (passwords, key passphrases) stored in the system keyring: GNOME
+//! Keyring / KWallet through the freedesktop Secret Service API on Linux, the
+//! Credential Manager on Windows.
 //!
 //! The database only stores the *name* of the keyring entry, never the secret.
 //! Every call here is blocking (D-Bus round trip, possibly an unlock prompt):
@@ -27,6 +28,25 @@ pub struct Secrets {
     backend: Backend,
 }
 
+#[cfg(target_os = "linux")]
+fn system_store() -> keyring_core::Result<Arc<CredentialStore>> {
+    let store = dbus_secret_service_keyring_store::Store::new()?;
+    Ok(store)
+}
+
+#[cfg(windows)]
+fn system_store() -> keyring_core::Result<Arc<CredentialStore>> {
+    let store = windows_native_keyring_store::Store::new()?;
+    Ok(store)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn system_store() -> keyring_core::Result<Arc<CredentialStore>> {
+    Err(keyring_core::Error::NotSupportedByStore(
+        "aucun trousseau pris en charge sur ce système".into(),
+    ))
+}
+
 /// Name of the keyring entry holding a profile's password or passphrase.
 pub fn profile_account(profile_id: i64) -> String {
     format!("profile-{profile_id}")
@@ -34,7 +54,7 @@ pub fn profile_account(profile_id: i64) -> String {
 
 impl Secrets {
     pub fn system() -> Self {
-        let backend = match dbus_secret_service_keyring_store::Store::new() {
+        let backend = match system_store() {
             Ok(store) => Backend::Keyring(store),
             Err(e) => {
                 tracing::warn!("system keyring unavailable: {e}");

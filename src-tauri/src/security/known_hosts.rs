@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -328,13 +327,10 @@ fn write_private_file(path: &Path, content: &str) -> Result<(), AppError> {
         fs::create_dir_all(parent).map_err(storage_error)?;
     }
     let tmp = path.with_extension("tmp");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)
-        .map_err(storage_error)?;
+    let mut file =
+        crate::platform::private_file(OpenOptions::new().write(true).create(true).truncate(true))
+            .open(&tmp)
+            .map_err(storage_error)?;
     file.write_all(content.as_bytes()).map_err(storage_error)?;
     file.sync_all().map_err(storage_error)?;
     fs::rename(&tmp, path).map_err(storage_error)
@@ -508,6 +504,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn written_file_is_private() {
         use std::os::unix::fs::PermissionsExt;

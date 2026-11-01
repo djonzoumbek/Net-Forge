@@ -29,15 +29,24 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = "1"
 rusqlite = { version = "0.41", features = ["bundled"] }
 keyring-core = "1"
-dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
 hmac = "0.13"
 sha1 = "0.11"
 data-encoding = "2"
 socket2 = "0.6"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 russh-sftp = "3.0.1"
-tokio-serial = { version = "5.5.0", features = ["libudev"] }
+tokio-serial = "5.5.0"
 tauri-plugin-dialog = "2"
+
+# Each OS has its own keyring backend behind keyring-core.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+# libudev: USB adapter names (vendor, model) in the serial port list.
+tokio-serial = { version = "5.5.0", features = ["libudev"] }
+
+[target.'cfg(windows)'.dependencies]
+# Windows Credential Manager.
+windows-native-keyring-store = "1.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

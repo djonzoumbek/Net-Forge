@@ -141,9 +141,10 @@ pub struct SerialTransport {
 pub async fn connect(params: SerialParams) -> Result<SerialTransport, AppError> {
     let settings = params.settings.validate()?;
     let device = params.device.trim().to_string();
-    if !device.starts_with("/dev/") {
+    if !crate::platform::is_serial_device(&device) {
         return Err(AppError::InvalidInput(format!(
-            "port série invalide : « {device} » (attendu : /dev/ttyUSB0, /dev/ttyS0…)."
+            "port série invalide : « {device} » (exemple : {}).",
+            crate::platform::SERIAL_EXAMPLE
         )));
     }
     let builder = tokio_serial::new(&device, settings.baud_rate)
@@ -180,6 +181,11 @@ pub async fn connect(params: SerialParams) -> Result<SerialTransport, AppError> 
     })
 }
 
+#[cfg(unix)]
+const LIST_PORTS_HINT: &str = "`ls /dev/ttyUSB* /dev/ttyACM*`";
+#[cfg(not(unix))]
+const LIST_PORTS_HINT: &str = "Gestionnaire de périphériques → Ports (COM et LPT)";
+
 fn open_error(device: &str, e: tokio_serial::Error) -> AppError {
     use std::io::ErrorKind as Io;
     use tokio_serial::ErrorKind as K;
@@ -188,7 +194,7 @@ fn open_error(device: &str, e: tokio_serial::Error) -> AppError {
             AppError::SerialPermission(access::permission_message(Path::new(device)))
         }
         K::Io(Io::NotFound) => AppError::Serial(format!(
-            "{device} introuvable : l'adaptateur USB est-il branché ? (`ls /dev/ttyUSB* /dev/ttyACM*`)"
+            "{device} introuvable : l'adaptateur USB est-il branché ? ({LIST_PORTS_HINT})"
         )),
         K::NoDevice => AppError::Serial(format!(
             "{device} est déjà utilisé par un autre programme (minicom, screen, une autre \
@@ -244,5 +250,6 @@ impl Transport for SerialTransport {
     }
 }
 
-#[cfg(test)]
+// Pseudo-terminal pairs (`SerialStream::pair`) only exist on Unix.
+#[cfg(all(test, unix))]
 mod tests;
