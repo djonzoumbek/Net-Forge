@@ -10,7 +10,7 @@ par onglet, profils rangés en dossiers, mots de passe dans le trousseau systèm
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
 session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
-de fichiers SFTP, redirections de port (tunnels -L et SOCKS), copie à la sélection et collage au clic droit. Paquets : `.deb` et
+de fichiers SFTP, hôte de rebond (ProxyJump), redirections de port (tunnels -L et SOCKS), copie à la sélection et collage au clic droit. Paquets : `.deb` et
 AppImage (Ubuntu), `PKGBUILD` (Arch), installateurs `.exe` / `.msi` (Windows, construits
 par GitHub Actions).
 
@@ -237,6 +237,25 @@ Bouton **Fichiers** d'un onglet SSH connecté : un panneau s'ouvre sous le termi
 - Fermer le panneau ne coupe pas les transferts ; fermer la session, si.
 - Les dossiers entiers ne sont pas transférés (fichier par fichier). Beaucoup
   d'équipements réseau n'ont pas SFTP (seulement SCP) : un message le signale.
+
+## Hôte de rebond (ProxyJump)
+
+Comme `ssh -J` : un profil SSH peut être joint **à travers un autre profil SSH** (un
+bastion). Dans le profil, choisir « Hôte de rebond (bastion) » ; l'hôte et le port du
+profil sont alors ceux **vus depuis le bastion** (ex. `10.0.0.1:22`, une adresse privée
+du labo).
+
+- Le bastion utilise son propre profil : authentification, mot de passe du trousseau,
+  mode compatibilité legacy, keepalive.
+- Chaînes possibles (le bastion a lui-même un rebond), 3 sauts au plus ; les boucles
+  sont refusées à l'enregistrement. Supprimer le profil bastion rend les autres directs.
+- **Chaque clé d'hôte est vérifiée** (bastion puis cible), avec la même confirmation
+  d'empreinte et le même blocage en cas de clé modifiée qu'en connexion directe.
+- La barre d'état affiche « via <bastion> » (survol : toute la chaîne).
+- Le mot de passe du bastion doit être enregistré dans son profil (ou utiliser une clé
+  ou l'agent SSH) : il ne peut pas être saisi à la connexion.
+- Erreurs propres au rebond : « Hôte de rebond … n'a pas pu joindre 10.0.0.1:22 »
+  (cible injoignable depuis le bastion, ou `AllowTcpForwarding no` sur le bastion).
 
 ## Redirections de port (tunnels SSH)
 
