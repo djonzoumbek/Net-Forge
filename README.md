@@ -5,12 +5,12 @@ serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLa
 Cibles : Ubuntu (principale), Arch Linux et Windows 10/11. Tout fonctionne en local,
 sans service cloud.
 
-**État : phases 1 à 8 terminées, portage Arch et Windows en cours de validation.** SSH, Telnet et console série, une session
+**État : phases 1 à 8 terminées ; Arch et Windows (CI verte) ; fonctionnalités ajoutées depuis : voir ci-dessous.** SSH, Telnet et console série, une session
 par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
 session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
-de fichiers SFTP, hôte de rebond (ProxyJump), redirections de port (tunnels -L et SOCKS), copie à la sélection et collage au clic droit. Paquets : `.deb` et
+de fichiers SFTP, sauvegarde et comparaison de configuration, hôte de rebond (ProxyJump), redirections de port (tunnels -L et SOCKS), copie à la sélection et collage au clic droit. Paquets : `.deb` et
 AppImage (Ubuntu), `PKGBUILD` (Arch), installateurs `.exe` / `.msi` (Windows, construits
 par GitHub Actions).
 
@@ -238,6 +238,32 @@ Bouton **Fichiers** d'un onglet SSH connecté : un panneau s'ouvre sous le termi
 - Les dossiers entiers ne sont pas transférés (fichier par fichier). Beaucoup
   d'équipements réseau n'ont pas SFTP (seulement SCP) : un message le signale.
 
+## Sauvegarde de configuration
+
+Bouton **Config** de la barre d'état : NetForge tape la commande dans la session (SSH,
+Telnet ou série), enregistre la sortie jusqu'au retour de l'invite, puis la compare à la
+sauvegarde précédente.
+
+- Commandes proposées : Cisco `show running-config`, Huawei
+  `display current-configuration`, Juniper, MikroTik, ou n'importe quelle commande.
+  Celle utilisée est retenue par profil.
+- Lancer la sauvegarde **à l'invite** (mode `enable` pour Cisco). La sortie défile aussi
+  dans le terminal ; le pager (`--More--`, `---- More ----`) est répondu
+  automatiquement et retiré du fichier, même si l'option du profil est désactivée.
+- La fin est détectée par le retour de l'invite exacte (celle qui précède la commande
+  dans l'écho, ex. `R1#`), stable pendant 1 s : une ligne qui finit par `#` dans une
+  bannière n'arrête pas la capture. Abandon après 3 minutes sans invite.
+- Fichiers : `~/Documents/NetForge/backups/<profil>/<AAAA-MM-JJ_HH-MM-SS>.txt`, texte brut
+  sans séquences d'échappement, droits `0600` (une configuration contient des
+  secrets : hachages, communautés SNMP, clés). Fichiers ordinaires : utilisables avec
+  `diff`, `git`, un éditeur.
+- Comparaison : la nouvelle sauvegarde est comparée d'office à la précédente ; sinon
+  « Diff préc. » ou deux cases cochées puis « Comparer la sélection ». Diff unifié
+  (lignes ajoutées en vert, retirées en rouge, 3 lignes de contexte). « Ignorer
+  horodatages et compteurs » (activé par défaut) écarte les lignes qui changent toutes
+  seules (`! Last configuration change at…`, `ntp clock-period`, `Current configuration :`).
+- Session déconnectée : les sauvegardes restent consultables et comparables.
+
 ## Hôte de rebond (ProxyJump)
 
 Comme `ssh -J` : un profil SSH peut être joint **à travers un autre profil SSH** (un
@@ -319,6 +345,7 @@ Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) sous Linux,
 Les redirections de port d'un profil sont dans la table `port_forwards` (migration 0007).
 
 Journaux de session (si activés) : `~/Documents/NetForge/logs/` par défaut.
+Sauvegardes de configuration : `~/Documents/NetForge/backups/<profil>/`.
 
 - Mots de passe et passphrases : trousseau système (GNOME Keyring, service « NetForge »,
   entrées `profile-<id>`), visibles dans l'application « Mots de passe et clés ».
@@ -398,6 +425,7 @@ src-tauri/src/
                           serial/ (tokio-serial, diagnostic du groupe dialout)
   transfers/              SFTP : listing, envoi/réception, progression, annulation
   forwarding/             redirections de port -L / -D (écoute locale, SOCKS5, relais)
+  backups/                sauvegardes de configuration (fichiers, liste, lecture)
   persistence/            SQLite : migrations, profils, dossiers, réglages
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
