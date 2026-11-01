@@ -22,7 +22,7 @@ jobs:
             bundles: nsis,msi
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Linux system libraries
         if: runner.os == 'Linux'
         run: |
@@ -33,7 +33,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -48,7 +48,7 @@ jobs:
           releaseDraft: true
           args: --bundles ${{ matrix.bundles }}
       # Manual run (no tag): the installers are downloadable from the run page.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: github.ref_type != 'tag'
         with:
           name: netforge-${{ runner.os }}

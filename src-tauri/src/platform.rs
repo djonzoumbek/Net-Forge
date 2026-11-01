@@ -5,7 +5,7 @@
 //! through its inherited ACL, so there is nothing to add.
 
 use std::fs::{DirBuilder, OpenOptions};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Readable and writable by the current user only (Linux: 0600).
 pub fn private_file(options: &mut OpenOptions) -> &mut OpenOptions {
@@ -41,6 +41,14 @@ pub fn restrict(path: &Path, is_dir: bool) -> std::io::Result<()> {
         let _ = (path, is_dir);
         Ok(())
     }
+}
+
+/// The user's home directory: `HOME` on Linux, `USERPROFILE` on Windows.
+pub fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Example shown when a serial port name is rejected.

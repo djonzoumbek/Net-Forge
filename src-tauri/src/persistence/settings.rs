@@ -128,7 +128,11 @@ mod tests {
                 theme: "solarized-dark".into(),
                 font_family: " Ubuntu Mono ".into(),
                 font_size: 16,
-                log_dir: "/tmp/netforge-logs".into(),
+                // Absolute on every OS (`/tmp/...` is not absolute on Windows).
+                log_dir: std::env::temp_dir()
+                    .join("netforge-logs")
+                    .to_string_lossy()
+                    .into_owned(),
                 copy_on_select: false,
                 right_click_paste: true,
                 ctrl_v_paste: false,

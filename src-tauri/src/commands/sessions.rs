@@ -103,9 +103,13 @@ impl SshConnectRequest {
 }
 
 /// `~/.ssh/id_ed25519` is what users type; the OS does not expand `~` for us.
+/// On Windows, `~\.ssh\id_ed25519` is accepted too.
 pub(crate) fn expand_home(path: &str) -> PathBuf {
-    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\").filter(|_| cfg!(windows)));
+    match (rest, crate::platform::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest),
         _ => PathBuf::from(path),
     }
 }
@@ -249,7 +253,7 @@ fn log_dir(app: &AppHandle, configured: &str) -> PathBuf {
     app.path()
         .document_dir()
         .or_else(|_| app.path().home_dir())
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
+        .unwrap_or_else(|_| std::env::temp_dir())
         .join("NetForge")
         .join("logs")
 }

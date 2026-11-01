@@ -837,7 +837,8 @@ mod tests {
         with_db(|conn, secrets| {
             let mut console = input("R1 console", SecretChange::Set { value: "pw".into() });
             console.protocol = Protocol::Serial;
-            console.host = "/dev/ttyUSB0".into();
+            // A valid port name for the OS running the tests (/dev/ttyUSB0 or COM3).
+            console.host = crate::platform::SERIAL_EXAMPLE.into();
             console.options.auto_reconnect = true;
             console.serial = SerialSettings {
                 baud_rate: 115_200,
@@ -848,7 +849,10 @@ mod tests {
             };
             let p = create(conn, secrets, console)?;
             assert_eq!(p.protocol, Protocol::Serial);
-            assert_eq!((p.host.as_str(), p.port), ("/dev/ttyUSB0", 0));
+            assert_eq!(
+                (p.host.as_str(), p.port),
+                (crate::platform::SERIAL_EXAMPLE, 0)
+            );
             assert_eq!(p.auth_method, AuthMethod::None);
             assert!(!p.has_saved_secret, "no secret for a serial console");
             assert!(!p.options.auto_reconnect);
@@ -862,7 +866,7 @@ mod tests {
             assert!(create(conn, secrets, bad).is_err(), "not a device path");
             let mut bad = input("x", SecretChange::Keep);
             bad.protocol = Protocol::Serial;
-            bad.host = "/dev/ttyS0".into();
+            bad.host = crate::platform::SERIAL_EXAMPLE.into();
             bad.serial.data_bits = 9;
             assert!(create(conn, secrets, bad).is_err());
 
