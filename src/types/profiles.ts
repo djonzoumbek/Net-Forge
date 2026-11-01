@@ -53,6 +53,8 @@ export interface Profile extends SessionOptions {
   portForwards: ForwardSpec[];
   /** SSH profile used as jump host (ssh -J). */
   jumpProfileId: number | null;
+  /** Last configuration backup command (set by the backup dialog only). */
+  backupCommand: string;
 }
 
 /** How a session of the profile behaves once connected. */

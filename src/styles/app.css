@@ -1338,3 +1338,141 @@ button.align-end {
 .forward-row .forward-fields {
   flex: 1;
 }
+
+/* Configuration backups: wider than the other dialogs (side-by-side list and
+   diff). `:has` keeps the Modal component unchanged. */
+.dialog.wide:has(.backups) {
+  max-width: min(1100px, 95vw);
+  width: 95vw;
+}
+
+.backups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.backup-capture .field-row {
+  align-items: flex-end;
+}
+
+.backup-body {
+  display: flex;
+  gap: 12px;
+  height: min(60vh, 560px);
+  min-height: 240px;
+}
+
+.backup-list {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.backup-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.backup-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font-size: 0.85rem;
+  border-radius: 4px;
+}
+
+.backup-list li.selected {
+  background: var(--hover);
+}
+
+.backup-list li label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.backup-size {
+  color: var(--muted);
+}
+
+.backup-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+}
+
+.backup-view.empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.backup-view-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--panel-border);
+  font-size: 0.85rem;
+}
+
+.backup-view-header .hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-view-header .checkbox {
+  margin-left: auto;
+}
+
+.backup-text {
+  flex: 1;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  font-family: "DejaVu Sans Mono", "Cascadia Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  user-select: text;
+  white-space: pre;
+}
+
+.diff-added {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.diff-removed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.diff-same {
+  color: var(--muted);
+}
+
+.diff-hunk {
+  margin-top: 6px;
+  color: var(--accent);
+}
+
+.diff-added-count {
+  color: var(--ok);
+}
+
+.diff-removed-count {
+  color: var(--danger);
+}

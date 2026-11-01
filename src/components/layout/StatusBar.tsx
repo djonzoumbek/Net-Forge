@@ -16,6 +16,8 @@ interface StatusBarProps {
   /** A profile forward failed to start. */
   forwardsAlert: boolean;
   onToggleForwards: () => void;
+  /** Configuration backups of this device. */
+  onBackups: () => void;
 }
 
 const statusText: Record<TabStatus["kind"], string> = {
@@ -96,6 +98,9 @@ export function StatusBar(props: StatusBarProps) {
         </span>
       )}
       <span className="spacer" />
+      <button onClick={props.onBackups} title="Sauvegarder la configuration de l'équipement, comparer les versions">
+        Config
+      </button>
       {sftpAvailable && (
         <button
           className={props.forwardsOpen ? "toggled" : ""}

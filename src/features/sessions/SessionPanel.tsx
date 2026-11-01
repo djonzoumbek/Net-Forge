@@ -3,6 +3,7 @@ import { StatusBar } from "../../components/layout/StatusBar";
 import { closeSession } from "../../services/sessionService";
 import type { CommandButton } from "../../types/profiles";
 import type { SessionEvent, SessionId } from "../../types/session";
+import { BackupsDialog } from "../backups/BackupsDialog";
 import { CommandBar } from "../commands/CommandBar";
 import { ForwardsPanel } from "../forwards/ForwardsPanel";
 import { useProfileForwards } from "../forwards/useProfileForwards";
@@ -60,6 +61,7 @@ export function SessionPanel(props: SessionPanelProps) {
   // Port forwards: same lifetime rule as the SFTP panel.
   const [forwardsOpen, setForwardsOpen] = useState(false);
   const [forwardsMounted, setForwardsMounted] = useState(false);
+  const [backupsOpen, setBackupsOpen] = useState(false);
   const forwardErrors = useProfileForwards(sftpSession, tab.target.profile?.portForwards ?? NO_FORWARDS);
 
   return (
@@ -78,6 +80,7 @@ export function SessionPanel(props: SessionPanelProps) {
           setFilesMounted(true);
           setFilesOpen((open) => !open);
         }}
+        onBackups={() => setBackupsOpen(true)}
         forwardsOpen={forwardsOpen}
         forwardsAlert={forwardErrors.length > 0}
         onToggleForwards={() => {
@@ -138,6 +141,15 @@ export function SessionPanel(props: SessionPanelProps) {
       {filesMounted && sftpSession !== null && (
         // New session (reconnection): new SFTP channel, fresh panel.
         <SftpPanel key={sftpSession} sessionId={sftpSession} visible={filesOpen} />
+      )}
+      {backupsOpen && (
+        <BackupsDialog
+          device={tab.target.profile?.name ?? tab.target.label}
+          sessionId={connected ? tab.sessionId : null}
+          profileId={tab.target.profile?.id ?? null}
+          savedCommand={tab.target.profile?.backupCommand ?? ""}
+          onClose={() => setBackupsOpen(false)}
+        />
       )}
       {(forwardsMounted || forwardErrors.length > 0) && sftpSession !== null && (
         <ForwardsPanel
