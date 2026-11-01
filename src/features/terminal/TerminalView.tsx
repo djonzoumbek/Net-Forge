@@ -15,7 +15,7 @@ import type { SessionEvent, SessionId } from "../../types/session";
 import type { ThemeName } from "../../types/settings";
 import { matchShortcut } from "../shortcuts";
 import { createAckBatcher, createInputQueue } from "./flowControl";
-import { needsPasteConfirmation } from "./paste";
+import { isPlainCtrlV, needsPasteConfirmation } from "./paste";
 import { SearchBar, type SearchOptions } from "./SearchBar";
 import { fontStack, themes } from "./theme";
 
@@ -25,6 +25,10 @@ export interface TerminalAppearance {
   fontFamily: string;
   fontSize: number;
   scrollback: number;
+  /** Clipboard behaviour: read at event time, so changes apply at once. */
+  copyOnSelect: boolean;
+  rightClickPaste: boolean;
+  ctrlVPaste: boolean;
 }
 
 interface TerminalViewProps {
@@ -78,6 +82,8 @@ export function TerminalView(props: TerminalViewProps) {
       fontSize: initial.fontSize,
       scrollback: initial.scrollback,
       theme: themes[initial.theme].colors,
+      // Right click pastes (option) instead of selecting a word.
+      rightClickSelectsWord: false,
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -155,21 +161,54 @@ export function TerminalView(props: TerminalViewProps) {
     };
     container.addEventListener("paste", onPaste, true);
 
+    const pasteClipboard = () => {
+      void navigator.clipboard
+        .readText()
+        .then(pasteChecked)
+        .catch(() => {});
+    };
+    const copySelection = () => {
+      if (term.hasSelection()) void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+    };
+
+    // Copy on select: the selection changes on every mouse move while dragging,
+    // so the clipboard is written once the selection has settled.
+    let copyTimer: ReturnType<typeof setTimeout> | undefined;
+    subscriptions.push(
+      term.onSelectionChange(() => {
+        if (!appearanceRef.current.copyOnSelect) return;
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(copySelection, 150);
+      }),
+    );
+
+    // Right click pastes the clipboard (PuTTY / SecureCRT habit). Without the
+    // option, the webview's own context menu stays.
+    const onContextMenu = (event: MouseEvent) => {
+      if (!appearanceRef.current.rightClickPaste) return;
+      event.preventDefault();
+      pasteClipboard();
+    };
+    container.addEventListener("contextmenu", onContextMenu);
+
     // Ctrl+Shift+C / Ctrl+Shift+V: copy/paste without stealing Ctrl+C from the shell.
     term.attachCustomKeyEventHandler((event) => {
       // Application shortcuts are not sent to the remote shell: the window
       // listener (App) acts on them.
       if (matchShortcut(event) !== null) return false;
+      if (appearanceRef.current.ctrlVPaste && isPlainCtrlV(event)) {
+        // Stops the webview's native paste too, which would paste a second time.
+        event.preventDefault();
+        pasteClipboard();
+        return false;
+      }
       if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey) return true;
       if (event.code === "KeyC" && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        copySelection();
         return false;
       }
       if (event.code === "KeyV") {
-        void navigator.clipboard
-          .readText()
-          .then(pasteChecked)
-          .catch(() => {});
+        pasteClipboard();
         return false;
       }
       return true;
@@ -194,6 +233,8 @@ export function TerminalView(props: TerminalViewProps) {
     return () => {
       disposed = true;
       container.removeEventListener("paste", onPaste, true);
+      container.removeEventListener("contextmenu", onContextMenu);
+      clearTimeout(copyTimer);
       observer.disconnect();
       cancelAnimationFrame(frame);
       subscriptions.forEach((s) => s.dispose());

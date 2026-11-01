@@ -10,6 +10,12 @@ export interface AppSettings {
   fontSize: number;
   /** Session logs directory; empty = ~/Documents/NetForge/logs. */
   logDir: string;
+  /** A mouse selection is copied to the clipboard at once. */
+  copyOnSelect: boolean;
+  /** A right click in the terminal pastes the clipboard. */
+  rightClickPaste: boolean;
+  /** Ctrl+V pastes (otherwise ^V goes to the remote shell). */
+  ctrlVPaste: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -18,4 +24,7 @@ export const defaultSettings: AppSettings = {
   fontFamily: "DejaVu Sans Mono",
   fontSize: 14,
   logDir: "",
+  copyOnSelect: true,
+  rightClickPaste: true,
+  ctrlVPaste: true,
 };

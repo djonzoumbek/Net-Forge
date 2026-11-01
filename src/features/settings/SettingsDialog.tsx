@@ -17,6 +17,9 @@ export function SettingsDialog({ settings, onSave, onCancel }: SettingsDialogPro
   const [fontFamily, setFontFamily] = useState(settings.fontFamily);
   const [fontSize, setFontSize] = useState(String(settings.fontSize));
   const [logDir, setLogDir] = useState(settings.logDir);
+  const [copyOnSelect, setCopyOnSelect] = useState(settings.copyOnSelect);
+  const [rightClickPaste, setRightClickPaste] = useState(settings.rightClickPaste);
+  const [ctrlVPaste, setCtrlVPaste] = useState(settings.ctrlVPaste);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -31,6 +34,9 @@ export function SettingsDialog({ settings, onSave, onCancel }: SettingsDialogPro
         fontFamily,
         fontSize: Number(fontSize),
         logDir,
+        copyOnSelect,
+        rightClickPaste,
+        ctrlVPaste,
       });
     } catch (e) {
       setError(toAppError(e).message);
@@ -87,6 +93,27 @@ export function SettingsDialog({ settings, onSave, onCancel }: SettingsDialogPro
           <p className="hint">
             Historique : de 1 000 à 200 000 lignes par onglet (chaque ligne coûte de la mémoire).
             Ctrl++ / Ctrl+- changent la taille temporairement.
+          </p>
+        </fieldset>
+
+        <fieldset className="section">
+          <legend>Presse-papiers</legend>
+          <label className="checkbox">
+            <input type="checkbox" checked={copyOnSelect} onChange={(e) => setCopyOnSelect(e.target.checked)} />
+            Copier automatiquement le texte sélectionné
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={rightClickPaste} onChange={(e) => setRightClickPaste(e.target.checked)} />
+            Coller avec le clic droit
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={ctrlVPaste} onChange={(e) => setCtrlVPaste(e.target.checked)} />
+            Coller avec Ctrl+V
+          </label>
+          <p className="hint">
+            Ctrl+Shift+C / Ctrl+Shift+V restent toujours disponibles. Désactive « Coller avec Ctrl+V » si tu as besoin
+            d'envoyer ^V au terminal distant (bloc visuel dans vim, saisie littérale dans bash). Un collage de
+            plusieurs lignes demande toujours une confirmation.
           </p>
         </fieldset>
 

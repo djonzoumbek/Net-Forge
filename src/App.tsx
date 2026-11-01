@@ -144,8 +144,24 @@ function App() {
   const activeTab = state.tabs.find((tab) => tab.key === state.active) ?? null;
   const fontSize = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, settings.fontSize + zoom));
   const appearance = useMemo<TerminalAppearance>(
-    () => ({ theme: settings.theme, fontFamily: settings.fontFamily, fontSize, scrollback: settings.scrollback }),
-    [settings.theme, settings.fontFamily, fontSize, settings.scrollback],
+    () => ({
+      theme: settings.theme,
+      fontFamily: settings.fontFamily,
+      fontSize,
+      scrollback: settings.scrollback,
+      copyOnSelect: settings.copyOnSelect,
+      rightClickPaste: settings.rightClickPaste,
+      ctrlVPaste: settings.ctrlVPaste,
+    }),
+    [
+      settings.theme,
+      settings.fontFamily,
+      fontSize,
+      settings.scrollback,
+      settings.copyOnSelect,
+      settings.rightClickPaste,
+      settings.ctrlVPaste,
+    ],
   );
 
   // The whole interface follows the theme (CSS variables in app.css).

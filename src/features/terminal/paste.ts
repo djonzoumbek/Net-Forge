@@ -10,3 +10,15 @@ export function pastedLineCount(text: string): number {
 export function needsPasteConfirmation(text: string): boolean {
   return pastedLineCount(text) > 1;
 }
+
+/** Ctrl+V without other modifier (letter matched on `key`, so any layout works). */
+export function isPlainCtrlV(event: KeyboardEvent): boolean {
+  return (
+    event.type === "keydown" &&
+    event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    event.key.toLowerCase() === "v"
+  );
+}

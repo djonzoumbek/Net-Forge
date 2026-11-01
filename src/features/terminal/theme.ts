@@ -113,9 +113,18 @@ export const themes: Record<ThemeName, { label: string; colors: ITheme }> = {
 };
 
 /** Monospace fonts usually present on Ubuntu (any installed font can be typed). */
-export const suggestedFonts = ["DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Noto Sans Mono", "Monospace"];
+export const suggestedFonts = [
+  "DejaVu Sans Mono",
+  "Ubuntu Mono",
+  "Liberation Mono",
+  "Noto Sans Mono",
+  "Cascadia Mono",
+  "Consolas",
+  "Monospace",
+];
 
 /** CSS font list: the chosen font first, then safe fallbacks. */
 export function fontStack(family: string): string {
-  return `"${family}", "DejaVu Sans Mono", "Ubuntu Mono", monospace`;
+  // Cascadia Mono / Consolas: the monospace fonts shipped with Windows.
+  return `"${family}", "DejaVu Sans Mono", "Ubuntu Mono", "Cascadia Mono", Consolas, monospace`;
 }

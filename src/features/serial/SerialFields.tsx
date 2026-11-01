@@ -4,6 +4,9 @@ import type { FlowControl, Parity, SerialSettings } from "../../types/profiles";
 import type { SerialPortEntry } from "../../types/session";
 import { baudRates } from "./serial";
 
+// WebView2 (Windows) reports "Windows" in its user agent; WebKitGTK does not.
+const SERIAL_PLACEHOLDER = navigator.userAgent.includes("Windows") ? "COM3" : "/dev/ttyUSB0";
+
 interface SerialFieldsProps {
   device: string;
   settings: SerialSettings;
@@ -44,7 +47,7 @@ export function SerialFields({ device, settings, onDeviceChange, onSettingsChang
             value={device}
             onChange={(e) => onDeviceChange(e.target.value)}
             list="serial-ports"
-            placeholder="/dev/ttyUSB0"
+            placeholder={SERIAL_PLACEHOLDER}
             spellCheck={false}
           />
           <datalist id="serial-ports">

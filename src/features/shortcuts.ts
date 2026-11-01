@@ -23,6 +23,7 @@ export const shortcutList: { keys: string; label: string }[] = [
   { keys: "Ctrl+PageDown / Ctrl+PageUp", label: "Onglet suivant / précédent" },
   { keys: "Ctrl+Shift+F", label: "Rechercher dans l'historique" },
   { keys: "Ctrl+Shift+C / Ctrl+Shift+V", label: "Copier / coller" },
+  { keys: "Sélection / clic droit / Ctrl+V", label: "Copier / coller (selon les réglages Presse-papiers)" },
   { keys: "Ctrl++ / Ctrl+- / Ctrl+0", label: "Agrandir / réduire / taille normale du texte" },
   { keys: "Ctrl+Shift+B", label: "Afficher / masquer les profils" },
   { keys: "Ctrl+,", label: "Réglages" },
