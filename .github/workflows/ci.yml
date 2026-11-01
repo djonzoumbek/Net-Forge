@@ -57,6 +57,14 @@ jobs:
         working-directory: src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
-      # Tests needing the Docker SSH/Telnet servers stay #[ignore]d.
-      - run: cargo test
+      # Tests needing the Docker SSH/Telnet servers stay #[ignore]d. Failures are
+      # also published as annotations (readable without opening the logs).
+      - name: cargo test
         working-directory: src-tauri
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test 2>&1 | tee test.log || {
+            grep -E "panicked at|^test .* FAILED|^---- " test.log | head -40 | sed 's/^/::error::/'
+            exit 1
+          }

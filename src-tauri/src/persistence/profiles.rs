@@ -1126,7 +1126,8 @@ mod tests {
                 "secret found in a database file"
             );
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Cleanup only: on Windows an antivirus may still hold a file briefly.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

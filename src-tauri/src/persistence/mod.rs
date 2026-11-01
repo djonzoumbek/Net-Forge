@@ -175,14 +175,17 @@ mod tests {
             (1, "R1"),
             "backup holds the pre-migration state"
         );
-        // Opening an up-to-date database creates no new backup.
+        // Opening an up-to-date database creates no new backup. The backup is
+        // closed first: Windows cannot delete a file that is still open.
+        drop(backup);
         std::fs::remove_file(dir.join("netforge.db.backup-v1")).unwrap();
         Database::open(&path).unwrap();
         assert!(
             !dir.join(format!("netforge.db.backup-v{}", MIGRATIONS.len()))
                 .exists()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Cleanup only: on Windows an antivirus may still hold a file briefly.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A database created by the previous version keeps its data when upgraded.
