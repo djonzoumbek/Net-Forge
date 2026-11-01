@@ -44,6 +44,7 @@ fn params(auth: SshAuth) -> SshParams {
         auth,
         legacy: false,
         keepalive: Some(Duration::from_secs(15)),
+        jump: None,
     }
 }
 

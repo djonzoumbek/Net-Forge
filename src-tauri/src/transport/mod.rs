@@ -46,6 +46,8 @@ pub struct ConnectionInfo {
     pub encrypted: bool,
     /// SSH only: negotiated algorithms and which of them are legacy.
     pub algorithms: Option<ssh::algorithms::Negotiated>,
+    /// SSH only: jump hosts crossed, from the first contacted to the last.
+    pub via: Vec<String>,
 }
 
 /// Something that happened on the remote side.

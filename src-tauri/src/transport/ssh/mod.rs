@@ -3,7 +3,9 @@
 pub mod algorithms;
 
 use std::fmt;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -63,6 +65,10 @@ pub struct SshParams {
     /// SSH keepalive interval; `None` disables it. Keeps idle sessions open
     /// through firewalls/NAT and detects dead connections.
     pub keepalive: Option<Duration>,
+    /// Jump host (`ssh -J`): this server is reached through a `direct-tcpip`
+    /// channel of the jump host's own SSH connection. The jump host may itself
+    /// have a jump host (a chain).
+    pub jump: Option<Box<SshParams>>,
 }
 
 /// What the user needs to see to decide whether to trust an unknown server.
@@ -84,7 +90,8 @@ struct ClientHandler {
     host: String,
     port: u16,
     known_hosts: Arc<KnownHosts>,
-    ask_host_key: HostKeyPrompt,
+    /// `Arc`: every hop of a jump chain asks through the same prompt.
+    ask_host_key: Arc<HostKeyPrompt>,
     /// `true` while waiting for the user, so the handshake timeout can be paused.
     prompting: watch::Sender<bool>,
     /// Why russh ended the connection, read later to explain the closure.
@@ -262,18 +269,162 @@ pub struct SshTransport {
     exit_status: Option<u32>,
     disconnect_reason: Arc<Mutex<Option<String>>>,
     negotiated: Arc<Mutex<Negotiated>>,
+    /// Jump hosts this connection goes through, nearest first. Kept alive (and
+    /// closed) with the session: the target's bytes travel inside them.
+    jumps: Vec<Connection>,
 }
 
-/// Opens the connection, checks the host key, authenticates and starts an
-/// interactive shell with a PTY of the given size.
+/// An authenticated SSH connection (to the target or to a jump host).
+struct Connection {
+    handle: client::Handle<ClientHandler>,
+    disconnect_reason: Arc<Mutex<Option<String>>>,
+    negotiated: Arc<Mutex<Negotiated>>,
+    /// `user@host:port`, shown in the status bar ("via ...").
+    label: String,
+    /// Jump hosts below this one (a chain), nearest first.
+    jumps: Vec<Connection>,
+}
+
+impl Connection {
+    async fn disconnect(&self) {
+        let _ = self
+            .handle
+            .disconnect(Disconnect::ByApplication, "session closed", "en")
+            .await;
+    }
+}
+
+/// Maximum jump hosts in a chain (validated when profiles are saved too).
+pub const MAX_JUMPS: usize = 3;
+
+/// Opens the connection (through its jump hosts, if any), checks the host keys,
+/// authenticates and starts an interactive shell with a PTY of the given size.
 pub async fn connect(
     params: SshParams,
     size: TermSize,
     known_hosts: Arc<KnownHosts>,
     ask_host_key: HostKeyPrompt,
 ) -> Result<SshTransport, AppError> {
-    let tcp = net::open_tcp(&params.host, params.port, params.keepalive).await?;
+    let Connection {
+        handle,
+        disconnect_reason,
+        negotiated,
+        jumps,
+        ..
+    } = open_connection(params, known_hosts, Arc::new(ask_host_key), 0).await?;
 
+    let channel = handle.channel_open_session().await?;
+    channel
+        .request_pty(
+            false,
+            "xterm-256color",
+            size.cols.into(),
+            size.rows.into(),
+            0,
+            0,
+            &[],
+        )
+        .await?;
+    channel.request_shell(false).await?;
+
+    Ok(SshTransport {
+        handle: Arc::new(handle),
+        channel,
+        exit_status: None,
+        disconnect_reason,
+        negotiated,
+        jumps,
+    })
+}
+
+/// TCP for a direct connection; a `direct-tcpip` channel of the jump host's
+/// connection otherwise (the jump host connects to the target for us, exactly
+/// like `ssh -J`). Recursive for chains: `Box::pin` is required for an async
+/// function that calls itself (its future would otherwise have an infinite size).
+fn open_connection(
+    mut params: SshParams,
+    known_hosts: Arc<KnownHosts>,
+    ask_host_key: Arc<HostKeyPrompt>,
+    depth: usize,
+) -> Pin<Box<dyn Future<Output = Result<Connection, AppError>> + Send>> {
+    Box::pin(async move {
+        let label = format!("{}@{}:{}", params.username, params.host, params.port);
+        let Some(jump) = params.jump.take() else {
+            let tcp = net::open_tcp(&params.host, params.port, params.keepalive).await?;
+            return establish(params, tcp, known_hosts, ask_host_key, label).await;
+        };
+        if depth >= MAX_JUMPS {
+            return Err(AppError::InvalidInput(format!(
+                "{MAX_JUMPS} hôtes de rebond au plus."
+            )));
+        }
+        let jump_label = format!("{}:{}", jump.host, jump.port);
+        let bastion = open_connection(
+            *jump,
+            Arc::clone(&known_hosts),
+            Arc::clone(&ask_host_key),
+            depth + 1,
+        )
+        .await
+        .map_err(|e| jump_error(&jump_label, e))?;
+        let channel = bastion
+            .handle
+            .channel_open_direct_tcpip(params.host.clone(), u32::from(params.port), "127.0.0.1", 0)
+            .await
+            .map_err(|e| match e {
+                russh::Error::ChannelOpenFailure(reason) => AppError::Jump(format!(
+                    "{jump_label} n'a pas pu joindre {}:{} ({reason:?}) : hôte injoignable \
+                     depuis le rebond, ou redirections interdites sur le rebond \
+                     (AllowTcpForwarding).",
+                    params.host, params.port
+                )),
+                other => jump_error(&jump_label, AppError::from(other)),
+            })?;
+        match establish(
+            params,
+            channel.into_stream(),
+            known_hosts,
+            ask_host_key,
+            label,
+        )
+        .await
+        {
+            Ok(mut target) => {
+                target.jumps.push(bastion);
+                Ok(target)
+            }
+            Err(e) => {
+                bastion.disconnect().await;
+                Err(e)
+            }
+        }
+    })
+}
+
+/// A failure on a jump host, told as such. Host key errors keep their own type:
+/// the interface shows the fingerprint dialog for the jump host like for any server.
+fn jump_error(jump: &str, error: AppError) -> AppError {
+    match error {
+        AppError::HostKeyChanged(_)
+        | AppError::HostKeyRejected
+        | AppError::HostKeyRevoked
+        | AppError::Jump(_) => error,
+        other => AppError::Jump(format!("{jump} : {other}")),
+    }
+}
+
+/// Handshake (with host key check) and authentication on any byte stream: a
+/// TCP socket or a channel through a jump host.
+async fn establish<S>(
+    params: SshParams,
+    stream: S,
+    known_hosts: Arc<KnownHosts>,
+    ask_host_key: Arc<HostKeyPrompt>,
+    label: String,
+) -> Result<Connection, AppError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let config = Arc::new(client::Config {
         keepalive_interval: params.keepalive,
         keepalive_max: KEEPALIVE_MAX,
@@ -297,7 +448,7 @@ pub async fn connect(
 
     // Handshake with a timeout that is paused while the host key prompt is open:
     // the user may take as long as they want to read the fingerprint.
-    let handshake = client::connect_stream(config, tcp, handler);
+    let handshake = client::connect_stream(config, stream, handler);
     tokio::pin!(handshake);
     let deadline = sleep(HANDSHAKE_TIMEOUT);
     tokio::pin!(deadline);
@@ -324,26 +475,12 @@ pub async fn connect(
         .await
         .map_err(|_| AppError::Timeout("l'authentification n'a pas abouti.".into()))??;
 
-    let channel = handle.channel_open_session().await?;
-    channel
-        .request_pty(
-            false,
-            "xterm-256color",
-            size.cols.into(),
-            size.rows.into(),
-            0,
-            0,
-            &[],
-        )
-        .await?;
-    channel.request_shell(false).await?;
-
-    Ok(SshTransport {
-        handle: Arc::new(handle),
-        channel,
-        exit_status: None,
+    Ok(Connection {
+        handle,
         disconnect_reason,
         negotiated,
+        label,
+        jumps: Vec::new(),
     })
 }
 
@@ -537,6 +674,25 @@ async fn load_private_key(
     })
 }
 
+/// Jump hosts from the farthest (first contacted) to the nearest.
+fn jump_labels(jumps: &[Connection]) -> Vec<String> {
+    let mut labels = Vec::new();
+    for jump in jumps {
+        labels.extend(jump_labels(&jump.jumps));
+        labels.push(jump.label.clone());
+    }
+    labels
+}
+
+fn close_jumps<'a>(jumps: &'a [Connection]) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+    Box::pin(async move {
+        for jump in jumps {
+            jump.disconnect().await;
+            close_jumps(&jump.jumps).await;
+        }
+    })
+}
+
 impl Transport for SshTransport {
     fn sftp_link(&self) -> Option<SshLink> {
         Some(SshLink(Arc::clone(&self.handle)))
@@ -552,6 +708,7 @@ impl Transport for SshTransport {
             protocol: "ssh",
             encrypted: true,
             algorithms: Some(negotiated),
+            via: jump_labels(&self.jumps),
         }
     }
 
@@ -609,6 +766,8 @@ impl Transport for SshTransport {
             .handle
             .disconnect(Disconnect::ByApplication, "session closed", "en")
             .await;
+        // Then the jump hosts, nearest first (each one carries the next).
+        close_jumps(&self.jumps).await;
         // `self` is dropped here: the russh session task ends and the socket is closed.
     }
 }

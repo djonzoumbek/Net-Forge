@@ -153,6 +153,7 @@ impl Transport for TelnetTransport {
             protocol: "telnet",
             encrypted: false,
             algorithms: None,
+            via: Vec::new(),
         }
     }
 

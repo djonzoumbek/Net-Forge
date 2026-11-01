@@ -21,7 +21,7 @@ use crate::sessions::{
 };
 use crate::transport::TermSize;
 use crate::transport::serial::{self, SerialParams, SerialPortEntry, SerialSettings};
-use crate::transport::ssh::{SshAuth, SshParams};
+use crate::transport::ssh::{MAX_JUMPS, SshAuth, SshParams};
 use crate::transport::telnet::TelnetParams;
 
 /// Upper bound for one `session_write` call (a large paste).
@@ -98,6 +98,7 @@ impl SshConnectRequest {
             auth,
             legacy: self.legacy,
             keepalive: Some(DEFAULT_KEEPALIVE),
+            jump: None,
         })
     }
 }
@@ -278,10 +279,15 @@ pub async fn session_open_profile(
     let typed = secret.filter(|s| !s.is_empty()).map(Zeroizing::new);
     let secrets = Arc::clone(&secrets);
     // Reading the keyring may block (D-Bus): done on the blocking pool with the DB.
-    let (profile, saved, app_settings) = db
+    let (profile, saved, jump, app_settings) = db
         .run(move |conn| {
             let (profile, saved) = profiles::get_with_secret(conn, &secrets, profile_id)?;
-            Ok((profile, saved, settings::get(conn)?))
+            let jump = if profile.protocol == Protocol::Ssh {
+                jump_chain(conn, &secrets, profile.jump_profile_id)?
+            } else {
+                None
+            };
+            Ok((profile, saved, jump, settings::get(conn)?))
         })
         .await?;
     let keepalive = (profile.options.keepalive_secs > 0)
@@ -320,7 +326,30 @@ pub async fn session_open_profile(
         tracing::info!(profile = profile_id, host = %params.host, port = params.port, "opening Telnet session");
         return Ok(manager.open_telnet(params, size, automation, sinks(on_data, on_event)));
     }
-    let secret = typed.or(saved);
+    let mut params = profile_ssh_params(profile, typed.or(saved))?;
+    params.jump = jump;
+    tracing::info!(
+        profile = profile_id,
+        host = %params.host,
+        port = params.port,
+        jump = params.jump.is_some(),
+        "opening SSH session"
+    );
+    let known_hosts = Arc::clone(&known_hosts);
+    Ok(manager.open_ssh(
+        params,
+        size,
+        known_hosts,
+        automation,
+        sinks(on_data, on_event),
+    ))
+}
+
+/// SSH parameters of a profile. `secret`: password or key passphrase, if known.
+fn profile_ssh_params(
+    profile: profiles::Profile,
+    secret: Option<Zeroizing<String>>,
+) -> Result<SshParams, AppError> {
     let auth = match profile.auth_method {
         AuthMethod::None => {
             return Err(AppError::InvalidInput(
@@ -334,23 +363,60 @@ pub async fn session_open_profile(
         },
         AuthMethod::Agent => SshAuth::Agent { socket: None },
     };
-    let params = SshParams {
+    Ok(SshParams {
         host: profile.host,
         port: profile.port,
         username: profile.username,
         auth,
         legacy: profile.legacy_mode,
-        keepalive,
-    };
-    tracing::info!(profile = profile_id, host = %params.host, port = params.port, "opening SSH session");
-    let known_hosts = Arc::clone(&known_hosts);
-    Ok(manager.open_ssh(
-        params,
-        size,
-        known_hosts,
-        automation,
-        sinks(on_data, on_event),
-    ))
+        keepalive: (profile.options.keepalive_secs > 0)
+            .then(|| Duration::from_secs(profile.options.keepalive_secs.into())),
+        jump: None,
+    })
+}
+
+/// The jump host chain starting at `first`, as nested SSH parameters (the
+/// nearest jump host on top). Secrets come from the keyring only: nothing can be
+/// typed for a jump host at connection time.
+fn jump_chain(
+    conn: &rusqlite::Connection,
+    secrets: &Secrets,
+    first: Option<i64>,
+) -> Result<Option<Box<SshParams>>, AppError> {
+    let mut chain = Vec::new();
+    let mut next = first;
+    while let Some(id) = next {
+        // Also checked when saving; a profile may have changed since (or loop).
+        if chain.len() >= MAX_JUMPS {
+            return Err(AppError::Jump(format!(
+                ": {MAX_JUMPS} hôtes de rebond au plus (ou chaîne en boucle)."
+            )));
+        }
+        let (profile, secret) = profiles::get_with_secret(conn, secrets, id)?;
+        if profile.protocol != Protocol::Ssh {
+            return Err(AppError::Jump(format!(
+                "« {} » : ce n'est plus un profil SSH.",
+                profile.name
+            )));
+        }
+        next = profile.jump_profile_id;
+        chain.push((profile, secret));
+    }
+    // Built from the farthest jump host (connected first) to the nearest.
+    let mut jump: Option<Box<SshParams>> = None;
+    for (profile, secret) in chain.into_iter().rev() {
+        let name = profile.name.clone();
+        let mut params = profile_ssh_params(profile, secret).map_err(|e| match e {
+            AppError::PasswordRequired => AppError::Jump(format!(
+                "« {name} » : enregistre son mot de passe dans le trousseau (Modifier le profil) \
+                 ou utilise une clé ou l'agent SSH pour t'en servir comme rebond."
+            )),
+            other => other,
+        })?;
+        params.jump = jump;
+        jump = Some(Box::new(params));
+    }
+    Ok(jump)
 }
 
 /// Splits a multi-line text into lines; inner empty lines are kept (an empty

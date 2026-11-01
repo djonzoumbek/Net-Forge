@@ -197,6 +197,7 @@ mod tests {
                 protocol: "test",
                 encrypted: true,
                 algorithms: None,
+                via: Vec::new(),
             }
         }
         async fn recv(&mut self) -> TransportEvent {

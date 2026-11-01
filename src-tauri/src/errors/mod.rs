@@ -97,6 +97,10 @@ pub enum AppError {
     #[error("Redirection de port : {0}")]
     Forward(String),
 
+    /// A jump host failed (connection, authentication, or reaching the target).
+    #[error("Hôte de rebond {0}")]
+    Jump(String),
+
     /// The message explains the `dialout` group fix for this machine.
     #[error("Accès au port série refusé. {0}")]
     SerialPermission(String),
@@ -131,6 +135,7 @@ impl AppError {
             AppError::Serial(_) => "serial",
             AppError::SerialPermission(_) => "serial_permission",
             AppError::Forward(_) => "forward",
+            AppError::Jump(_) => "jump",
         }
     }
 }

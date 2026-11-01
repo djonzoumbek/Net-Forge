@@ -39,6 +39,7 @@ async fn ssh_session(tag: &str) -> (SessionManager, u64) {
         auth: SshAuth::Password(Zeroizing::new("netforge-test".into())),
         legacy: false,
         keepalive: None,
+        jump: None,
     };
     let id = manager.open_ssh(params, SIZE, known_hosts, Automation::default(), sinks);
     loop {

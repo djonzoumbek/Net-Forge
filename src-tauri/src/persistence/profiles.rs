@@ -98,6 +98,8 @@ pub struct Profile {
     pub serial: SerialSettings,
     /// SSH port forwards started at connection (empty for Telnet and serial).
     pub port_forwards: Vec<ForwardSpec>,
+    /// SSH profile used as jump host (`ssh -J`), if any.
+    pub jump_profile_id: Option<i64>,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -209,6 +211,8 @@ pub struct ProfileInput {
     pub serial: SerialSettings,
     #[serde(default)]
     pub port_forwards: Vec<ForwardSpec>,
+    #[serde(default)]
+    pub jump_profile_id: Option<i64>,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -249,6 +253,7 @@ impl ProfileInput {
             self.options.keepalive_secs = 0;
             self.options.auto_reconnect = false;
             self.port_forwards.clear();
+            self.jump_profile_id = None;
             return Ok(self);
         }
         if self.host.is_empty() || self.host.len() > 255 || self.host.contains(char::is_whitespace)
@@ -268,6 +273,7 @@ impl ProfileInput {
             self.legacy_mode = false;
             self.secret = SecretChange::Clear;
             self.port_forwards.clear();
+            self.jump_profile_id = None;
             return Ok(self);
         }
         self.port_forwards = forwards::normalize(std::mem::take(&mut self.port_forwards))?;
@@ -299,7 +305,7 @@ impl ProfileInput {
 const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
      key_path, secret_ref, legacy_mode, protocol, keepalive_secs, auto_reconnect, \
      pager_auto_reply, login_commands, session_log, serial_baud_rate, serial_data_bits, \
-     serial_parity, serial_stop_bits, serial_flow_control";
+     serial_parity, serial_stop_bits, serial_flow_control, jump_profile_id";
 
 /// Text columns parsed after the row is read (rusqlite closures cannot return
 /// `AppError`).
@@ -339,6 +345,7 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
         },
         // Read from their own table by the callers (`get_stored`, `list`).
         port_forwards: Vec::new(),
+        jump_profile_id: row.get(21)?,
         options: SessionOptions {
             keepalive_secs: row.get(11)?,
             auto_reconnect: row.get(12)?,
@@ -515,6 +522,7 @@ pub fn create(
     write_options(&tx, id, &input.options)?;
     write_serial(&tx, id, &input.serial)?;
     forwards::replace(&tx, id, &input.port_forwards)?;
+    write_jump(&tx, id, input.jump_profile_id)?;
     if let SecretChange::Set { value } = &input.secret {
         let account = profile_account(id);
         secrets.set(&account, value)?;
@@ -560,6 +568,7 @@ pub fn update(
     write_options(&tx, id, &input.options)?;
     write_serial(&tx, id, &input.serial)?;
     forwards::replace(&tx, id, &input.port_forwards)?;
+    write_jump(&tx, id, input.jump_profile_id)?;
     match &input.secret {
         SecretChange::Keep => {}
         SecretChange::Set { value } => {
@@ -617,6 +626,49 @@ fn write_serial(conn: &Connection, id: i64, serial: &SerialSettings) -> Result<(
             flow_str(serial.flow_control),
             id
         ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+/// Checks the jump host of profile `id` (`None` while creating it) and saves it.
+/// The chain is followed to refuse loops (A via B via A) and chains too long.
+fn write_jump(conn: &Connection, id: i64, jump: Option<i64>) -> Result<(), AppError> {
+    let invalid = |m: String| Err(AppError::InvalidInput(m));
+    let mut next = jump;
+    let mut hops = 0;
+    while let Some(current) = next {
+        if current == id {
+            return invalid(
+                "l'hôte de rebond ne peut pas passer par ce profil lui-même (boucle).".into(),
+            );
+        }
+        hops += 1;
+        if hops > crate::transport::ssh::MAX_JUMPS {
+            return invalid(format!(
+                "{} hôtes de rebond au plus dans une chaîne.",
+                crate::transport::ssh::MAX_JUMPS
+            ));
+        }
+        let row: Option<(String, Option<i64>)> = conn
+            .query_row(
+                "SELECT protocol, jump_profile_id FROM profiles WHERE id = ?1",
+                params![current],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        match row {
+            None => return invalid("le profil de rebond n'existe plus.".into()),
+            Some((protocol, _)) if protocol != "ssh" => {
+                return invalid("l'hôte de rebond doit être un profil SSH.".into());
+            }
+            Some((_, further)) => next = further,
+        }
+    }
+    conn.execute(
+        "UPDATE profiles SET jump_profile_id = ?1 WHERE id = ?2",
+        params![jump, id],
     )
     .map_err(db_error)?;
     Ok(())
@@ -782,6 +834,7 @@ mod tests {
             secret,
             serial: SerialSettings::default(),
             port_forwards: Vec::new(),
+            jump_profile_id: None,
             options: SessionOptions {
                 keepalive_secs: 30,
                 auto_reconnect: false,
@@ -1128,6 +1181,60 @@ mod tests {
                 .query_row("SELECT count(*) FROM port_forwards", [], |r| r.get(0))
                 .map_err(crate::persistence::db_error)?;
             assert_eq!(left, 0);
+            Ok(())
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn jump_hosts_are_ssh_profiles_without_loops() {
+        with_db(|conn, secrets| {
+            let bastion = create(conn, secrets, input("bastion", SecretChange::Keep))?;
+            let mut router = input("R1", SecretChange::Keep);
+            router.jump_profile_id = Some(bastion.id);
+            let router = create(conn, secrets, router)?;
+            assert_eq!(router.jump_profile_id, Some(bastion.id));
+            assert_eq!(
+                list(conn)?
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == router.id)
+                    .unwrap()
+                    .jump_profile_id,
+                Some(bastion.id)
+            );
+
+            // bastion via R1 via bastion: a loop.
+            let mut looped = input("bastion", SecretChange::Keep);
+            looped.jump_profile_id = Some(router.id);
+            let err = update(conn, secrets, bastion.id, looped).unwrap_err();
+            assert!(err.to_string().contains("boucle"), "{err}");
+            let mut itself = input("bastion", SecretChange::Keep);
+            itself.jump_profile_id = Some(bastion.id);
+            assert!(update(conn, secrets, bastion.id, itself).is_err());
+
+            // A Telnet console cannot carry an SSH connection.
+            let mut console = input("console", SecretChange::Keep);
+            console.protocol = Protocol::Telnet;
+            let console = create(conn, secrets, console)?;
+            let mut via_telnet = input("R2", SecretChange::Keep);
+            via_telnet.jump_profile_id = Some(console.id);
+            assert!(create(conn, secrets, via_telnet).is_err());
+
+            // Chain of 3 jumps accepted, 4 refused.
+            let mut previous = router.id;
+            for name in ["j2", "j3"] {
+                let mut next = input(name, SecretChange::Keep);
+                next.jump_profile_id = Some(previous);
+                previous = create(conn, secrets, next)?.id;
+            }
+            let mut too_far = input("far", SecretChange::Keep);
+            too_far.jump_profile_id = Some(previous);
+            assert!(create(conn, secrets, too_far).is_err(), "4 jumps");
+
+            // Deleting the jump host makes R1 direct again.
+            delete(conn, secrets, bastion.id)?;
+            assert_eq!(get(conn, router.id)?.jump_profile_id, None);
             Ok(())
         })
         .await;

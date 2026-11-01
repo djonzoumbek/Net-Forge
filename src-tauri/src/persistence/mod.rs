@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0005_serial_profiles.sql"),
     include_str!("../../migrations/0006_clipboard_settings.sql"),
     include_str!("../../migrations/0007_port_forwards.sql"),
+    include_str!("../../migrations/0008_jump_hosts.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between

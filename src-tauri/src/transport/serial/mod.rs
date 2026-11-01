@@ -215,6 +215,7 @@ impl Transport for SerialTransport {
             // a neutral badge for this protocol.
             encrypted: false,
             algorithms: None,
+            via: Vec::new(),
         }
     }
 

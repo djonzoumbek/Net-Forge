@@ -105,6 +105,7 @@ fn open_all() -> Harness {
                 auth: SshAuth::Password(Zeroizing::new("netforge-test".into())),
                 legacy: false,
                 keepalive: Some(Duration::from_secs(15)),
+                jump: None,
             };
             manager.open_ssh(
                 params,
@@ -287,6 +288,7 @@ fn ssh_params(port: u16, keepalive: Option<Duration>) -> SshParams {
         auth: SshAuth::Password(Zeroizing::new("netforge-test".into())),
         legacy: false,
         keepalive,
+        jump: None,
     }
 }
 
@@ -635,5 +637,73 @@ async fn local_and_socks_forwards_go_through_the_ssh_server() {
             assert!(Instant::now() < deadline, "port {port} still in use");
             sleep(Duration::from_millis(50)).await;
         }
+    }
+}
+
+// ---------- Jump hosts (ssh -J) ----------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn session_through_jump_hosts_checks_every_host_key() {
+    // Bastion: the container's sshd from here (127.0.0.1:2222). Target: the same
+    // sshd seen from *inside* the container (127.0.0.1:22), so only reachable
+    // through the bastion. A second jump makes a chain of two.
+    let target = |jump: Option<Box<SshParams>>| SshParams {
+        host: "127.0.0.1".into(),
+        port: 22,
+        jump,
+        ..ssh_params(2222, None)
+    };
+    for chain in [1usize, 2] {
+        let mut params = target(Some(Box::new(ssh_params(2222, None))));
+        if chain == 2 {
+            params = target(Some(Box::new(params)));
+        }
+        let known_hosts = fresh_known_hosts(&format!("jump{chain}"));
+        let mut s =
+            single(|m, sinks| m.open_ssh(params, SIZE, known_hosts, Automation::default(), sinks));
+        let mut prompted = Vec::new();
+        let via = loop {
+            let event = tokio::time::timeout(Duration::from_secs(20), s.events.recv())
+                .await
+                .expect("event in time")
+                .expect("events open");
+            match event {
+                SessionEvent::HostKeyPrompt { info } => {
+                    prompted.push(format!("{}:{}", info.host, info.port));
+                    s.manager.answer_host_key(s.id, true).unwrap();
+                }
+                SessionEvent::Connected { info, .. } => break info.via,
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        // Farthest first: the bastion is contacted (and verified) before the target.
+        assert_eq!(prompted[0], "127.0.0.1:2222", "chain {chain}: {prompted:?}");
+        assert_eq!(prompted.last().unwrap(), "127.0.0.1:22");
+        assert_eq!(prompted.len(), 2, "same key for both hops of the chain");
+        assert_eq!(via.len(), chain, "{via:?}");
+        assert_eq!(via[0], "netforge@127.0.0.1:2222");
+        s.write("echo JUMP-$((6*7))\n").await;
+        s.wait_output("JUMP-42", Duration::from_secs(10)).await;
+        s.manager.send(s.id, SessionCommand::Close).await.unwrap();
+    }
+
+    // The bastion cannot reach the target: a jump error, not "unreachable".
+    let params = SshParams {
+        port: 9,
+        ..target(Some(Box::new(ssh_params(2222, None))))
+    };
+    let known_hosts = fresh_known_hosts("jump-refused");
+    let mut s =
+        single(|m, sinks| m.open_ssh(params, SIZE, known_hosts, Automation::default(), sinks));
+    match s.next_event(Duration::from_secs(20)).await {
+        Some(SessionEvent::Failed { code, message }) => {
+            assert_eq!(code, "jump");
+            assert!(
+                message.contains("n'a pas pu joindre 127.0.0.1:9"),
+                "{message}"
+            );
+        }
+        other => panic!("expected a jump failure, got {other:?}"),
     }
 }
