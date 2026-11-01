@@ -11,6 +11,11 @@ interface StatusBarProps {
   /** SFTP panel toggle, shown for connected SSH sessions only. */
   filesOpen: boolean;
   onToggleFiles: () => void;
+  /** Port forwards panel toggle (connected SSH sessions only). */
+  forwardsOpen: boolean;
+  /** A profile forward failed to start. */
+  forwardsAlert: boolean;
+  onToggleForwards: () => void;
 }
 
 const statusText: Record<TabStatus["kind"], string> = {
@@ -86,6 +91,20 @@ export function StatusBar(props: StatusBarProps) {
         </span>
       )}
       <span className="spacer" />
+      {sftpAvailable && (
+        <button
+          className={props.forwardsOpen ? "toggled" : ""}
+          aria-pressed={props.forwardsOpen}
+          onClick={props.onToggleForwards}
+          title={
+            props.forwardsAlert
+              ? "Une redirection du profil n'a pas pu démarrer"
+              : "Redirections de port (tunnels SSH -L / -D)"
+          }
+        >
+          {props.forwardsAlert ? "⚠ Tunnels" : "Tunnels"}
+        </button>
+      )}
       {sftpAvailable && (
         <button
           className={props.filesOpen ? "toggled" : ""}

@@ -10,6 +10,7 @@ const profile = (id: number, folderId: number | null): Profile => ({
   host: "h",
   port: 22,
   username: "u",
+  portForwards: [],
   authMethod: "password",
   keyPath: null,
   hasSavedSecret: false,

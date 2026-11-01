@@ -1,4 +1,5 @@
 // Mirrors src-tauri/src/persistence/profiles.rs.
+import type { ForwardSpec } from "./forwards";
 
 /** "serial": `host` is the device path (/dev/ttyUSB0), `port` is 0. */
 export type Protocol = "ssh" | "telnet" | "serial";
@@ -48,6 +49,8 @@ export interface Profile extends SessionOptions {
   hasSavedSecret: boolean;
   legacyMode: boolean;
   serial: SerialSettings;
+  /** SSH port forwards started at connection. */
+  portForwards: ForwardSpec[];
 }
 
 /** How a session of the profile behaves once connected. */
@@ -88,6 +91,7 @@ export interface ProfileInput extends SessionOptions {
   legacyMode: boolean;
   secret: SecretChange;
   serial: SerialSettings;
+  portForwards: ForwardSpec[];
 }
 
 export interface CommandButton {

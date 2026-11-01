@@ -4,6 +4,8 @@ import { closeSession } from "../../services/sessionService";
 import type { CommandButton } from "../../types/profiles";
 import type { SessionEvent, SessionId } from "../../types/session";
 import { CommandBar } from "../commands/CommandBar";
+import { ForwardsPanel } from "../forwards/ForwardsPanel";
+import { useProfileForwards } from "../forwards/useProfileForwards";
 import { TerminalView, type TerminalAppearance } from "../terminal/TerminalView";
 import { SftpPanel } from "../transfers/SftpPanel";
 import { MAX_AUTO_RECONNECT, type Tab } from "./tabs";
@@ -30,6 +32,8 @@ interface SessionPanelProps {
   onSearchClose: () => void;
 }
 
+const NO_FORWARDS: never[] = [];
+
 /** Seconds left before `at` (a Date.now() timestamp), refreshed every second. */
 function useCountdown(at: number | null): number {
   const [now, setNow] = useState(() => Date.now());
@@ -53,6 +57,10 @@ export function SessionPanel(props: SessionPanelProps) {
   const [filesOpen, setFilesOpen] = useState(false);
   const [filesMounted, setFilesMounted] = useState(false);
   const sftpSession = connected && status.info.protocol === "ssh" ? tab.sessionId : null;
+  // Port forwards: same lifetime rule as the SFTP panel.
+  const [forwardsOpen, setForwardsOpen] = useState(false);
+  const [forwardsMounted, setForwardsMounted] = useState(false);
+  const forwardErrors = useProfileForwards(sftpSession, tab.target.profile?.portForwards ?? NO_FORWARDS);
 
   return (
     <div className={`session-panel ${active ? "" : "inactive"}`} role="tabpanel">
@@ -69,6 +77,12 @@ export function SessionPanel(props: SessionPanelProps) {
         onToggleFiles={() => {
           setFilesMounted(true);
           setFilesOpen((open) => !open);
+        }}
+        forwardsOpen={forwardsOpen}
+        forwardsAlert={forwardErrors.length > 0}
+        onToggleForwards={() => {
+          setForwardsMounted(true);
+          setForwardsOpen((open) => !open);
         }}
       />
       <CommandBar
@@ -124,6 +138,14 @@ export function SessionPanel(props: SessionPanelProps) {
       {filesMounted && sftpSession !== null && (
         // New session (reconnection): new SFTP channel, fresh panel.
         <SftpPanel key={sftpSession} sessionId={sftpSession} visible={filesOpen} />
+      )}
+      {(forwardsMounted || forwardErrors.length > 0) && sftpSession !== null && (
+        <ForwardsPanel
+          key={sftpSession}
+          sessionId={sftpSession}
+          visible={forwardsOpen}
+          startupErrors={forwardErrors}
+        />
       )}
     </div>
   );

@@ -11,6 +11,9 @@ import {
   type SecretChange,
   type SerialSettings,
 } from "../../types/profiles";
+import type { ForwardSpec } from "../../types/forwards";
+import { ForwardFields } from "../forwards/ForwardFields";
+import { emptyForward, forwardError } from "../forwards/forwards";
 import { SerialFields } from "../serial/SerialFields";
 import { defaultPort, protocolLabels } from "./ConnectionForm";
 import { flattenFolders, type Tree } from "./tree";
@@ -49,6 +52,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   const [pagerAutoReply, setPagerAutoReply] = useState(profile?.pagerAutoReply ?? false);
   const [loginCommands, setLoginCommands] = useState(profile?.loginCommands ?? "");
   const [sessionLog, setSessionLog] = useState<LogMode>(profile?.sessionLog ?? "off");
+  const [portForwards, setPortForwards] = useState<ForwardSpec[]>(profile?.portForwards ?? []);
   const [saveSecret, setSaveSecret] = useState(false);
   const [savedAction, setSavedAction] = useState<SavedSecretAction>("keep");
   const [secret, setSecret] = useState("");
@@ -88,6 +92,11 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
       setError("Keepalive : nombre de secondes entre 0 (désactivé) et 3600.");
       return;
     }
+    const badForward = ssh ? portForwards.map(forwardError).findIndex((e) => e !== null) : -1;
+    if (badForward >= 0) {
+      setError(`Redirection ${badForward + 1} : ${forwardError(portForwards[badForward])}`);
+      return;
+    }
     setSaving(true);
     try {
       await onSave({
@@ -107,6 +116,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         loginCommands,
         sessionLog,
         serial,
+        portForwards: ssh ? portForwards : [],
       });
     } catch (e) {
       setError(toAppError(e).message);
@@ -313,6 +323,36 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
             Ces commandes sont enregistrées en clair : n'y mets jamais de mot de passe.
           </p>
         </fieldset>
+
+        {ssh && (
+          <fieldset className="section">
+            <legend>Redirections de port</legend>
+            {portForwards.map((spec, index) => (
+              <div key={index} className="forward-row">
+                <ForwardFields
+                  spec={spec}
+                  onChange={(next) => setPortForwards((list) => list.map((s, i) => (i === index ? next : s)))}
+                />
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => setPortForwards((list) => list.filter((_, i) => i !== index))}
+                >
+                  Retirer
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setPortForwards((list) => [...list, emptyForward()])}>
+              Ajouter une redirection
+            </button>
+            <p className="hint">
+              Démarrées à chaque connexion. Local (-L) : un port de cette machine mène à une destination vue depuis
+              le serveur SSH (ex. l'interface web d'un équipement du labo). SOCKS (-D) : un proxy pour faire passer
+              un navigateur par le serveur. D'autres redirections peuvent être ajoutées pendant la session (bouton
+              « Tunnels »).
+            </p>
+          </fieldset>
+        )}
 
         <fieldset className="section">
           <legend>Journal de session</legend>
