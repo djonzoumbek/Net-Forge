@@ -10,7 +10,11 @@ describe("matchShortcut", () => {
   it("recognises the application shortcuts", () => {
     expect(matchShortcut(key({ key: "T", ctrlKey: true, shiftKey: true }))).toBe("newTab");
     expect(matchShortcut(key({ key: "F", ctrlKey: true, shiftKey: true }))).toBe("search");
-    expect(matchShortcut(key({ key: "Tab", ctrlKey: true, shiftKey: true }))).toBe("previousTab");
+    expect(matchShortcut(key({ key: "Tab", code: "Tab", ctrlKey: true }))).toBe("nextTab");
+    // WebKitGTK: Shift+Tab arrives as ISO_Left_Tab, i.e. key "Unidentified".
+    expect(matchShortcut(key({ key: "Unidentified", code: "Tab", ctrlKey: true, shiftKey: true }))).toBe(
+      "previousTab",
+    );
     expect(matchShortcut(key({ key: "PageDown", ctrlKey: true }))).toBe("nextTab");
     expect(matchShortcut(key({ key: "+", ctrlKey: true, shiftKey: true }))).toBe("zoomIn");
     expect(matchShortcut(key({ key: "-", ctrlKey: true }))).toBe("zoomOut");

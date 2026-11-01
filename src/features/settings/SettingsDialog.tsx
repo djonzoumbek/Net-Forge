@@ -111,6 +111,10 @@ export function SettingsDialog({ settings, onSave, onCancel }: SettingsDialogPro
               </div>
             ))}
           </dl>
+          <p className="hint">
+            Les raccourcis d'onglet, de recherche et de zoom agissent sur la session active : ils sont sans effet
+            tant qu'aucune session n'est ouverte, ainsi que lorsqu'une fenêtre comme celle-ci est affichée.
+          </p>
         </fieldset>
 
         <div className="dialog-actions">

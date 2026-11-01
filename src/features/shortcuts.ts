@@ -33,7 +33,8 @@ export const shortcutList: { keys: string; label: string }[] = [
 export function matchShortcut(event: KeyboardEvent): ShortcutAction | null {
   if (event.type !== "keydown" || !event.ctrlKey || event.altKey || event.metaKey) return null;
   const key = event.key.toLowerCase();
-  if (event.key === "Tab") return event.shiftKey ? "previousTab" : "nextTab";
+  // `code`, not `key`: WebKitGTK reports Shift+Tab as "Unidentified" (GTK's ISO_Left_Tab).
+  if (event.code === "Tab") return event.shiftKey ? "previousTab" : "nextTab";
   if (event.key === "PageDown") return "nextTab";
   if (event.key === "PageUp") return "previousTab";
   if (event.shiftKey) {
