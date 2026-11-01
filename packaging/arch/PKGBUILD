@@ -16,8 +16,9 @@ makedepends=('rust' 'nodejs' 'npm' 'git')
 optdepends=('gnome-keyring: enregistrer les mots de passe (ou KWallet sous KDE)'
             'openssh: agent SSH (ssh-agent, ssh-add)')
 # makepkg's LTO flags target C code and break some Rust build scripts; the
-# release profile already enables Rust's own LTO.
-options=('!lto')
+# release profile already enables Rust's own LTO. !debug: the binary is already
+# stripped (profile.release), a debug package would be empty.
+options=('!lto' '!debug')
 source=("Net-Forge::git+https://github.com/djonzoumbek/Net-Forge.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
