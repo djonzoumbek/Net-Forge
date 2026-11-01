@@ -9,6 +9,7 @@ RUN apk add --no-cache openssh-server busybox-extras bash vim htop less iputils-
  && install -d -m 700 -o netforge -g netforge /home/netforge/.ssh \
  && sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
  && echo 'MaxStartups 100:30:200' >> /etc/ssh/sshd_config \
+ && sed -i 's/^#\?AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config \
  && seq 1 5000 | sed 's/^/ligne numéro /' > /home/netforge/big.txt
 COPY sshd_legacy_config /etc/ssh/sshd_legacy_config
 EXPOSE 22

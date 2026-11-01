@@ -6,7 +6,7 @@ mod runner;
 
 pub use runner::Automation;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -16,6 +16,7 @@ use serde::Serialize;
 use tokio::sync::{OnceCell, mpsc, oneshot};
 
 use crate::errors::AppError;
+use crate::forwarding::{self, ForwardInfo, ForwardSpec, RunningForward};
 use crate::security::known_hosts::{HostKeyMismatch, KnownHosts};
 use crate::transport::serial::{self, SerialParams};
 use crate::transport::ssh::{self, HostKeyInfo, HostKeyPrompt, SshLink, SshParams};
@@ -90,6 +91,10 @@ struct SessionEntry {
     /// SFTP channel, opened on first use and shared by every transfer of the
     /// session. Dropped with the entry when the session ends.
     sftp: Arc<OnceCell<Arc<SftpSession>>>,
+    /// Port forwards of this session, by id. Removing the entry when the
+    /// session ends drops them, which closes their ports and connections.
+    forwards: BTreeMap<u64, RunningForward>,
+    next_forward: u64,
 }
 
 /// Shared by every Tauri command through `tauri::State`.
@@ -174,6 +179,8 @@ impl SessionManager {
                 pending_host_key: None,
                 ssh_link: None,
                 sftp: Arc::new(OnceCell::new()),
+                forwards: BTreeMap::new(),
+                next_forward: 0,
             },
         );
 
@@ -367,6 +374,60 @@ impl SessionManager {
             })
             .await?;
         Ok(Arc::clone(sftp))
+    }
+
+    /// Starts a port forward on a connected SSH session.
+    pub async fn start_forward(
+        &self,
+        id: SessionId,
+        spec: ForwardSpec,
+    ) -> Result<ForwardInfo, AppError> {
+        let link = {
+            let sessions = self.sessions();
+            let entry = sessions.get(&id).ok_or(AppError::SessionNotFound(id))?;
+            entry.ssh_link.clone().ok_or_else(|| {
+                AppError::Forward("disponible uniquement sur une session SSH connectée.".into())
+            })?
+        };
+        // Binding the port is awaited without holding the map lock.
+        let running = forwarding::start(spec, link.dialer()).await?;
+        let mut sessions = self.sessions();
+        // The session may have ended meanwhile: `running` is dropped (stopped).
+        let entry = sessions.get_mut(&id).ok_or(AppError::SessionNotFound(id))?;
+        entry.next_forward += 1;
+        let forward_id = entry.next_forward;
+        let info = running.info(forward_id);
+        entry.forwards.insert(forward_id, running);
+        Ok(info)
+    }
+
+    pub fn stop_forward(&self, id: SessionId, forward_id: u64) -> Result<(), AppError> {
+        let removed = self
+            .sessions()
+            .get_mut(&id)
+            .ok_or(AppError::SessionNotFound(id))?
+            .forwards
+            .remove(&forward_id);
+        // Dropped outside the lock: aborting the tasks is quick, but no reason
+        // to do it while every other session waits for the map.
+        match removed {
+            Some(forward) => {
+                drop(forward);
+                tracing::info!(session = id, forward = forward_id, "port forward stopped");
+                Ok(())
+            }
+            None => Err(AppError::NotFound(format!("redirection {forward_id}"))),
+        }
+    }
+
+    pub fn list_forwards(&self, id: SessionId) -> Result<Vec<ForwardInfo>, AppError> {
+        let sessions = self.sessions();
+        let entry = sessions.get(&id).ok_or(AppError::SessionNotFound(id))?;
+        Ok(entry
+            .forwards
+            .iter()
+            .map(|(forward_id, forward)| forward.info(*forward_id))
+            .collect())
     }
 
     pub fn answer_host_key(&self, id: SessionId, accept: bool) -> Result<(), AppError> {

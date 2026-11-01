@@ -2,6 +2,7 @@
 //! modules. Each sub-module groups the commands of one domain.
 
 pub mod buttons;
+pub mod forwards;
 pub mod known_hosts;
 pub mod profiles;
 pub mod sessions;

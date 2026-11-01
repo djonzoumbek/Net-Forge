@@ -221,6 +221,37 @@ impl SshLink {
                 ))
             })
     }
+
+    /// Port forwarding: each call opens a `direct-tcpip` channel, i.e. asks the
+    /// SSH server to connect to `host:port` itself (`ssh -L` / `ssh -D`).
+    pub fn dialer(&self) -> crate::forwarding::Dialer {
+        let handle = Arc::clone(&self.0);
+        Arc::new(
+            move |host: String, port: u16, origin: std::net::SocketAddr| {
+                let handle = Arc::clone(&handle);
+                Box::pin(async move {
+                    let channel = handle
+                        .channel_open_direct_tcpip(
+                            host,
+                            u32::from(port),
+                            origin.ip().to_string(),
+                            u32::from(origin.port()),
+                        )
+                        .await
+                        .map_err(|e| match e {
+                            // The server could not reach the target, or forbids
+                            // forwarding (`AllowTcpForwarding no`, many routers).
+                            russh::Error::ChannelOpenFailure(reason) => AppError::Forward(format!(
+                                "refusé par le serveur SSH ({reason:?}) : destination injoignable \
+                             depuis le serveur, ou redirections interdites."
+                            )),
+                            other => AppError::from(other),
+                        })?;
+                    Ok(Box::new(channel.into_stream()) as Box<dyn crate::forwarding::Tunnel>)
+                })
+            },
+        )
+    }
 }
 
 pub struct SshTransport {

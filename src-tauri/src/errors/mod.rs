@@ -94,6 +94,9 @@ pub enum AppError {
     #[error("Port série : {0}")]
     Serial(String),
 
+    #[error("Redirection de port : {0}")]
+    Forward(String),
+
     /// The message explains the `dialout` group fix for this machine.
     #[error("Accès au port série refusé. {0}")]
     SerialPermission(String),
@@ -127,6 +130,7 @@ impl AppError {
             AppError::Cancelled => "cancelled",
             AppError::Serial(_) => "serial",
             AppError::SerialPermission(_) => "serial_permission",
+            AppError::Forward(_) => "forward",
         }
     }
 }

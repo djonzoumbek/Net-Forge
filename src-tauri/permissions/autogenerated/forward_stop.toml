@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-forward-stop"
+description = "Enables the forward_stop command without any pre-configured scope."
+commands.allow = ["forward_stop"]
+
+[[permission]]
+identifier = "deny-forward-stop"
+description = "Denies the forward_stop command without any pre-configured scope."
+commands.deny = ["forward_stop"]

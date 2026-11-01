@@ -515,3 +515,125 @@ async fn text_session_log_is_clean_and_readable() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// ---------- Port forwarding ----------
+
+/// Reads the first bytes the forwarded service sends.
+async fn read_banner(stream: &mut tokio::net::TcpStream) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut buf = [0u8; 64];
+    let n = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf))
+        .await
+        .expect("banner in time")
+        .unwrap();
+    String::from_utf8_lossy(&buf[..n]).into_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn local_and_socks_forwards_go_through_the_ssh_server() {
+    use crate::forwarding::{ForwardKind, ForwardSpec};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let mut s = open_ssh_session(2222, None, Automation::default()).await;
+    // Target seen from *inside* the container: its own sshd on port 22. Its
+    // banner proves that the bytes crossed the tunnel.
+    let local = s
+        .manager
+        .start_forward(
+            s.id,
+            ForwardSpec {
+                kind: ForwardKind::Local,
+                bind_address: "127.0.0.1".into(),
+                bind_port: 0,
+                target_host: "127.0.0.1".into(),
+                target_port: 22,
+            },
+        )
+        .await
+        .unwrap();
+    let mut client = TcpStream::connect(("127.0.0.1", local.local_port))
+        .await
+        .unwrap();
+    assert!(read_banner(&mut client).await.starts_with("SSH-2.0-"));
+
+    let socks = s
+        .manager
+        .start_forward(
+            s.id,
+            ForwardSpec {
+                kind: ForwardKind::Dynamic,
+                bind_address: "127.0.0.1".into(),
+                bind_port: 0,
+                target_host: String::new(),
+                target_port: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let mut proxied = TcpStream::connect(("127.0.0.1", socks.local_port))
+        .await
+        .unwrap();
+    proxied.write_all(&[5, 1, 0]).await.unwrap();
+    let mut method = [0u8; 2];
+    proxied.read_exact(&mut method).await.unwrap();
+    // "localhost" is resolved by the SSH server, as with `curl --socks5-hostname`.
+    let mut request = vec![5, 1, 0, 3, 9];
+    request.extend_from_slice(b"localhost");
+    request.extend_from_slice(&22u16.to_be_bytes());
+    proxied.write_all(&request).await.unwrap();
+    let mut reply = [0u8; 10];
+    proxied.read_exact(&mut reply).await.unwrap();
+    assert_eq!(reply[1], 0, "SOCKS CONNECT accepted");
+    assert!(read_banner(&mut proxied).await.starts_with("SSH-2.0-"));
+
+    // A target the server cannot reach: the error is recorded on the forward.
+    let refused = s
+        .manager
+        .start_forward(
+            s.id,
+            ForwardSpec {
+                kind: ForwardKind::Local,
+                bind_address: "127.0.0.1".into(),
+                bind_port: 0,
+                target_host: "127.0.0.1".into(),
+                target_port: 9,
+            },
+        )
+        .await
+        .unwrap();
+    let mut dead = TcpStream::connect(("127.0.0.1", refused.local_port))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 1];
+    let _ = tokio::time::timeout(Duration::from_secs(10), dead.read(&mut buf)).await;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let list = s.manager.list_forwards(s.id).unwrap();
+        let info = list.iter().find(|f| f.id == refused.id).unwrap();
+        if let Some(error) = &info.last_error {
+            assert!(error.contains("refusé par le serveur SSH"), "{error}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "error not recorded");
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    // Stopping one forward frees its port; closing the session frees the others.
+    s.manager.stop_forward(s.id, refused.id).unwrap();
+    assert_eq!(s.manager.list_forwards(s.id).unwrap().len(), 2);
+    s.manager.send(s.id, SessionCommand::Close).await.unwrap();
+    while s
+        .next_event(Duration::from_secs(10))
+        .await
+        .is_some_and(|e| !matches!(e, SessionEvent::Closed { .. }))
+    {}
+    let deadline = Instant::now() + Duration::from_secs(10);
+    for port in [local.local_port, socks.local_port, refused.local_port] {
+        while std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "port {port} still in use");
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+}

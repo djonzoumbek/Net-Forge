@@ -1,6 +1,7 @@
 //! SQLite storage (profiles, folders). Never contains secrets.
 
 pub mod buttons;
+pub mod forwards;
 pub mod profiles;
 pub mod settings;
 
@@ -21,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0004_session_logs_and_settings.sql"),
     include_str!("../../migrations/0005_serial_profiles.sql"),
     include_str!("../../migrations/0006_clipboard_settings.sql"),
+    include_str!("../../migrations/0007_port_forwards.sql"),
 ];
 
 /// `rusqlite::Connection` can be sent to another thread but not shared between

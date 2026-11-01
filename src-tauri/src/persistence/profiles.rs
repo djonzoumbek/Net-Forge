@@ -3,8 +3,9 @@
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use super::db_error;
+use super::{db_error, forwards};
 use crate::errors::AppError;
+use crate::forwarding::ForwardSpec;
 use crate::security::secrets::{Secrets, profile_account};
 use crate::transport::serial::{FlowControl, Parity, SerialSettings};
 
@@ -95,6 +96,8 @@ pub struct Profile {
     pub legacy_mode: bool,
     /// Line settings (serial profiles; defaults elsewhere).
     pub serial: SerialSettings,
+    /// SSH port forwards started at connection (empty for Telnet and serial).
+    pub port_forwards: Vec<ForwardSpec>,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -204,6 +207,8 @@ pub struct ProfileInput {
     pub secret: SecretChange,
     #[serde(default)]
     pub serial: SerialSettings,
+    #[serde(default)]
+    pub port_forwards: Vec<ForwardSpec>,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -243,6 +248,7 @@ impl ProfileInput {
             self.secret = SecretChange::Clear;
             self.options.keepalive_secs = 0;
             self.options.auto_reconnect = false;
+            self.port_forwards.clear();
             return Ok(self);
         }
         if self.host.is_empty() || self.host.len() > 255 || self.host.contains(char::is_whitespace)
@@ -261,8 +267,10 @@ impl ProfileInput {
             self.key_path = None;
             self.legacy_mode = false;
             self.secret = SecretChange::Clear;
+            self.port_forwards.clear();
             return Ok(self);
         }
+        self.port_forwards = forwards::normalize(std::mem::take(&mut self.port_forwards))?;
         if self.username.is_empty() {
             return invalid("le nom d'utilisateur est obligatoire en SSH.");
         }
@@ -329,6 +337,8 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
             stop_bits: row.get(19)?,
             flow_control: parse_flow(&row.get::<_, String>(20)?)?,
         },
+        // Read from their own table by the callers (`get_stored`, `list`).
+        port_forwards: Vec::new(),
         options: SessionOptions {
             keepalive_secs: row.get(11)?,
             auto_reconnect: row.get(12)?,
@@ -402,7 +412,9 @@ fn get_stored(conn: &Connection, id: i64) -> Result<StoredProfile, AppError> {
         .optional()
         .map_err(db_error)?
         .ok_or_else(|| AppError::NotFound(format!("profil {id}")))?;
-    finish(row)
+    let mut stored = finish(row)?;
+    stored.profile.port_forwards = forwards::load(conn, id)?;
+    Ok(stored)
 }
 
 pub fn list(conn: &Connection) -> Result<Library, AppError> {
@@ -426,11 +438,16 @@ pub fn list(conn: &Connection) -> Result<Library, AppError> {
             "SELECT {PROFILE_COLUMNS} FROM profiles ORDER BY name COLLATE NOCASE"
         ))
         .map_err(db_error)?;
+    let mut all_forwards = forwards::load_all(conn)?;
     let profiles = stmt
         .query_map([], read_profile)
         .map_err(db_error)?
-        .map(|row| finish(row.map_err(db_error)?).map(|s| s.profile))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|row| {
+            let mut profile = finish(row.map_err(db_error)?)?.profile;
+            profile.port_forwards = all_forwards.remove(&profile.id).unwrap_or_default();
+            Ok(profile)
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
     Ok(Library { folders, profiles })
 }
 
@@ -497,6 +514,7 @@ pub fn create(
     let id = tx.last_insert_rowid();
     write_options(&tx, id, &input.options)?;
     write_serial(&tx, id, &input.serial)?;
+    forwards::replace(&tx, id, &input.port_forwards)?;
     if let SecretChange::Set { value } = &input.secret {
         let account = profile_account(id);
         secrets.set(&account, value)?;
@@ -541,6 +559,7 @@ pub fn update(
     .map_err(db_error)?;
     write_options(&tx, id, &input.options)?;
     write_serial(&tx, id, &input.serial)?;
+    forwards::replace(&tx, id, &input.port_forwards)?;
     match &input.secret {
         SecretChange::Keep => {}
         SecretChange::Set { value } => {
@@ -762,6 +781,7 @@ mod tests {
             legacy_mode: false,
             secret,
             serial: SerialSettings::default(),
+            port_forwards: Vec::new(),
             options: SessionOptions {
                 keepalive_secs: 30,
                 auto_reconnect: false,
@@ -1054,5 +1074,62 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn port_forwards_are_saved_in_order_and_follow_the_profile() {
+        use crate::forwarding::ForwardKind;
+        let web = ForwardSpec {
+            kind: ForwardKind::Local,
+            bind_address: String::new(),
+            bind_port: 8443,
+            target_host: " 192.168.10.1 ".into(),
+            target_port: 443,
+        };
+        let socks = ForwardSpec {
+            kind: ForwardKind::Dynamic,
+            bind_address: "127.0.0.1".into(),
+            bind_port: 1080,
+            target_host: String::new(),
+            target_port: 0,
+        };
+        with_db(move |conn, secrets| {
+            let mut bastion = input("bastion", SecretChange::Keep);
+            bastion.port_forwards = vec![web.clone(), socks.clone()];
+            let p = create(conn, secrets, bastion)?;
+            assert_eq!(p.port_forwards.len(), 2);
+            assert_eq!(p.port_forwards[0].bind_address, "127.0.0.1", "normalized");
+            assert_eq!(p.port_forwards[0].target_host, "192.168.10.1");
+            assert_eq!(p.port_forwards[1].kind, ForwardKind::Dynamic);
+            assert_eq!(list(conn)?.profiles[0].port_forwards, p.port_forwards);
+
+            // Same local port twice: refused, nothing changed.
+            let mut twice = input("bastion", SecretChange::Keep);
+            twice.port_forwards = vec![socks.clone(), socks.clone()];
+            assert!(update(conn, secrets, p.id, twice).is_err());
+            assert_eq!(get(conn, p.id)?.port_forwards.len(), 2);
+
+            // Telnet has no SSH channel to forward through.
+            let mut telnet = input("bastion", SecretChange::Keep);
+            telnet.protocol = Protocol::Telnet;
+            telnet.port_forwards = vec![socks];
+            assert!(
+                update(conn, secrets, p.id, telnet)?
+                    .port_forwards
+                    .is_empty()
+            );
+
+            // Deleting the profile deletes its forwards (ON DELETE CASCADE).
+            let mut again = input("bastion", SecretChange::Keep);
+            again.port_forwards = vec![web];
+            update(conn, secrets, p.id, again)?;
+            delete(conn, secrets, p.id)?;
+            let left: i64 = conn
+                .query_row("SELECT count(*) FROM port_forwards", [], |r| r.get(0))
+                .map_err(crate::persistence::db_error)?;
+            assert_eq!(left, 0);
+            Ok(())
+        })
+        .await;
     }
 }

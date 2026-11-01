@@ -46,6 +46,9 @@
     "allow-sftp-download",
     "allow-sftp-upload",
     "allow-transfer-cancel",
+    "allow-forward-start",
+    "allow-forward-stop",
+    "allow-forward-list",
     "dialog:allow-open",
     "dialog:allow-save"
   ]

@@ -32,6 +32,9 @@ const COMMANDS: &[&str] = &[
     "sftp_download",
     "sftp_upload",
     "transfer_cancel",
+    "forward_start",
+    "forward_stop",
+    "forward_list",
 ];
 
 fn main() {

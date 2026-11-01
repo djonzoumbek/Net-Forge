@@ -1,5 +1,6 @@
 mod commands;
 mod errors;
+mod forwarding;
 mod persistence;
 mod platform;
 mod security;
@@ -92,6 +93,9 @@ pub fn run() {
             commands::sessions::session_ack,
             commands::sessions::session_close,
             commands::sessions::session_answer_host_key,
+            commands::forwards::forward_start,
+            commands::forwards::forward_stop,
+            commands::forwards::forward_list,
             commands::profiles::library_list,
             commands::profiles::profile_create,
             commands::profiles::profile_update,
