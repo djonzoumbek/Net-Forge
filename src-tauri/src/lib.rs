@@ -1,3 +1,4 @@
+mod backups;
 mod commands;
 mod errors;
 mod forwarding;
@@ -96,6 +97,9 @@ pub fn run() {
             commands::forwards::forward_start,
             commands::forwards::forward_stop,
             commands::forwards::forward_list,
+            commands::backups::backup_capture,
+            commands::backups::backup_list,
+            commands::backups::backup_read,
             commands::profiles::library_list,
             commands::profiles::profile_create,
             commands::profiles::profile_update,

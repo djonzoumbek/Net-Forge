@@ -7,8 +7,10 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep_until};
 
 use super::automation::{OutputWatcher, Reaction};
+use super::capture::{Capture, Step};
 use super::logger::{LogConfig, SessionLogger};
 use super::{SessionCommand, SessionEvent, SessionId, SessionSinks};
+use crate::errors::AppError;
 use crate::transport::{Transport, TransportEvent};
 
 /// Output is grouped for at most this long before being sent to the UI.
@@ -82,6 +84,11 @@ pub(crate) async fn run_session<T: Transport>(
         automation.pager_auto_reply,
         !automation.login_commands.is_empty(),
     );
+    // At most one command capture at a time (configuration backup).
+    let mut capture: Option<(
+        Capture,
+        tokio::sync::oneshot::Sender<Result<String, AppError>>,
+    )> = None;
 
     let flush = |batch: &mut Vec<u8>, flush_at: &mut Option<Instant>, unacked: &mut usize| {
         if !batch.is_empty() {
@@ -112,6 +119,22 @@ pub(crate) async fn run_session<T: Transport>(
                     }
                 }
                 Some(SessionCommand::Ack(bytes)) => unacked = unacked.saturating_sub(bytes),
+                Some(SessionCommand::Capture { command, reply }) => {
+                    if capture.is_some() {
+                        let _ = reply.send(Err(AppError::InvalidInput(
+                            "une sauvegarde est déjà en cours sur cette session.".into(),
+                        )));
+                    } else {
+                        let mut bytes = command.trim().as_bytes().to_vec();
+                        bytes.push(b'\r');
+                        if let Err(e) = transport.send(&bytes).await {
+                            let _ = reply.send(Err(AppError::InvalidInput(e.to_string())));
+                            break Some((format!("Envoi impossible : {e}"), true));
+                        }
+                        tracing::info!(session = id, "capturing command output");
+                        capture = Some((Capture::new(&command, Instant::now()), reply));
+                    }
+                }
                 // `None`: every sender is gone (manager dropped), treat as a close.
                 Some(SessionCommand::Close) | None => break None,
             },
@@ -129,6 +152,22 @@ pub(crate) async fn run_session<T: Transport>(
                 TransportEvent::Data(data) => {
                     if let Some(logger) = &mut logger {
                         logger.write(&data);
+                    }
+                    if let Some((current, _)) = &mut capture {
+                        match current.feed(&data, Instant::now()) {
+                            // Always answered while capturing, even with the option off.
+                            Ok(Step::AnswerPager) => {
+                                if let Err(e) = transport.send(b" ").await {
+                                    break Some((format!("Envoi impossible : {e}"), true));
+                                }
+                            }
+                            Ok(Step::Continue) => {}
+                            Err(e) => {
+                                if let Some((_, reply)) = capture.take() {
+                                    let _ = reply.send(Err(e));
+                                }
+                            }
+                        }
                     }
                     match watcher.observe(&data) {
                         Some(Reaction::PagerContinue) => {
@@ -153,6 +192,19 @@ pub(crate) async fn run_session<T: Transport>(
                 TransportEvent::Closed(reason) => break Some((reason, false)),
                 TransportEvent::Lost(reason) => break Some((reason, true)),
             },
+
+            // Prompt settled, or deadline reached.
+            _ = sleep_until(capture.as_ref().map_or_else(Instant::now, |(c, _)| c.wake_at())), if capture.is_some() => {
+                let now = Instant::now();
+                let done = capture
+                    .as_ref()
+                    .is_some_and(|(c, _)| c.settle_at.is_some_and(|s| now >= s) || now >= c.deadline);
+                if done && let Some((finished, reply)) = capture.take() {
+                    let result = finished.finish(now);
+                    tracing::info!(session = id, ok = result.is_ok(), "command capture finished");
+                    let _ = reply.send(result);
+                }
+            }
 
             // `flush_at` is always Some when this branch is enabled.
             _ = sleep_until(flush_at.unwrap_or_else(Instant::now)), if flush_at.is_some() => {

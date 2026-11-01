@@ -1,6 +1,7 @@
 //! Session manager: creates sessions, routes commands to them, tracks their lifetime.
 
 mod automation;
+mod capture;
 pub mod logger;
 mod runner;
 
@@ -37,6 +38,12 @@ pub enum SessionCommand {
     Resize(TermSize),
     /// The UI rendered this many bytes of output (flow control, see `runner`).
     Ack(usize),
+    /// Types `command` and returns its output once the prompt is back
+    /// (configuration backup).
+    Capture {
+        command: String,
+        reply: oneshot::Sender<Result<String, AppError>>,
+    },
     Close,
 }
 
@@ -270,6 +277,11 @@ impl SessionManager {
                         | SessionCommand::Sequence { .. }
                         | SessionCommand::Ack(_),
                     ) => {}
+                    Some(SessionCommand::Capture { reply, .. }) => {
+                        let _ = reply.send(Err(AppError::InvalidInput(
+                            "la session n'est pas encore connectée.".into(),
+                        )));
+                    }
                 },
             }
         };

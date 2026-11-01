@@ -35,6 +35,9 @@ const COMMANDS: &[&str] = &[
     "forward_start",
     "forward_stop",
     "forward_list",
+    "backup_capture",
+    "backup_list",
+    "backup_read",
 ];
 
 fn main() {

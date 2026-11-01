@@ -157,7 +157,7 @@ fn write_loop(
 }
 
 /// Keeps letters, digits, `-`, `_`, `.`; everything else becomes `_`.
-fn safe_file_name(title: &str) -> String {
+pub(crate) fn safe_file_name(title: &str) -> String {
     let name: String = title
         .chars()
         .map(|c| {
@@ -233,6 +233,11 @@ impl TextCleaner {
         }
         input.clear();
         output
+    }
+
+    /// The line being written (not ended by a newline yet), e.g. a prompt.
+    pub fn current_line(&self) -> String {
+        self.line.iter().collect()
     }
 
     /// The unfinished last line, at the end of the session.

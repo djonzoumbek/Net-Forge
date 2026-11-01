@@ -118,13 +118,13 @@ pub fn strip_controls(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn is_pager(line: &str) -> bool {
+pub(crate) fn is_pager(line: &str) -> bool {
     PAGER_PATTERNS.iter().any(|p| line.contains(p))
 }
 
 /// Shell or device prompt: `R1#`, `R1>`, `<Huawei>`, `[Huawei]`, `user@host:~$`.
 /// Heuristic, deliberately strict: short line ending with a prompt character.
-fn is_prompt(line: &str) -> bool {
+pub(crate) fn is_prompt(line: &str) -> bool {
     let line = line.trim_end();
     let length = line.chars().count();
     (1..=100).contains(&length) && line.ends_with(['#', '>', '$', '%', ']']) && !is_pager(line)

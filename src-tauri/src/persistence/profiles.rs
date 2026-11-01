@@ -100,6 +100,9 @@ pub struct Profile {
     pub port_forwards: Vec<ForwardSpec>,
     /// SSH profile used as jump host (`ssh -J`), if any.
     pub jump_profile_id: Option<i64>,
+    /// Last command used to back up the configuration (`show running-config`...).
+    /// Set by the backup command only, not by the profile editor.
+    pub backup_command: String,
     #[serde(flatten)]
     pub options: SessionOptions,
 }
@@ -305,7 +308,7 @@ impl ProfileInput {
 const PROFILE_COLUMNS: &str = "id, folder_id, name, host, port, username, auth_method, \
      key_path, secret_ref, legacy_mode, protocol, keepalive_secs, auto_reconnect, \
      pager_auto_reply, login_commands, session_log, serial_baud_rate, serial_data_bits, \
-     serial_parity, serial_stop_bits, serial_flow_control, jump_profile_id";
+     serial_parity, serial_stop_bits, serial_flow_control, jump_profile_id, backup_command";
 
 /// Text columns parsed after the row is read (rusqlite closures cannot return
 /// `AppError`).
@@ -346,6 +349,7 @@ fn read_profile(row: &Row) -> rusqlite::Result<RawRow> {
         // Read from their own table by the callers (`get_stored`, `list`).
         port_forwards: Vec::new(),
         jump_profile_id: row.get(21)?,
+        backup_command: row.get(22)?,
         options: SessionOptions {
             keepalive_secs: row.get(11)?,
             auto_reconnect: row.get(12)?,
@@ -669,6 +673,16 @@ fn write_jump(conn: &Connection, id: i64, jump: Option<i64>) -> Result<(), AppEr
     conn.execute(
         "UPDATE profiles SET jump_profile_id = ?1 WHERE id = ?2",
         params![jump, id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+/// Remembers the backup command of a profile (deleted profile: nothing to do).
+pub fn set_backup_command(conn: &Connection, id: i64, command: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE profiles SET backup_command = ?1 WHERE id = ?2",
+        params![command, id],
     )
     .map_err(db_error)?;
     Ok(())

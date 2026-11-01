@@ -49,6 +49,9 @@
     "allow-forward-start",
     "allow-forward-stop",
     "allow-forward-list",
+    "allow-backup-capture",
+    "allow-backup-list",
+    "allow-backup-read",
     "dialog:allow-open",
     "dialog:allow-save"
   ]

@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, sleep};
 use zeroize::Zeroizing;
 
@@ -705,5 +705,61 @@ async fn session_through_jump_hosts_checks_every_host_key() {
             );
         }
         other => panic!("expected a jump failure, got {other:?}"),
+    }
+}
+
+// ---------- Configuration backup (command capture) ----------
+
+async fn capture(s: &Single, command: &str) -> Result<String, AppError> {
+    let (reply, answer) = oneshot::channel();
+    s.manager
+        .send(
+            s.id,
+            SessionCommand::Capture {
+                command: command.into(),
+                reply,
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(60), answer)
+        .await
+        .expect("capture in time")
+        .expect("reply sent")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs ./scripts/ssh-test-server.sh start"]
+async fn capture_returns_exactly_the_command_output() {
+    let expected: String = (1..=5000).map(|n| format!("ligne numéro {n}\n")).collect();
+    for telnet in [false, true] {
+        let s = if telnet {
+            open_telnet_session(2323, None, Automation::default()).await
+        } else {
+            open_ssh_session(2222, None, Automation::default()).await
+        };
+        // Wait for the shell prompt: a capture is started at the prompt.
+        s.write("echo READY\r").await;
+        s.wait_output("READY\r\n", Duration::from_secs(10)).await;
+        sleep(Duration::from_millis(300)).await;
+
+        let text = capture(&s, "cat /home/netforge/big.txt").await.unwrap();
+        assert_eq!(text.lines().count(), 5000, "telnet: {telnet}");
+        assert_eq!(
+            text, expected,
+            "no echo, no prompt, nothing lost (telnet: {telnet})"
+        );
+
+        // A real pager (busybox `more`, waits for a key every screen of 24
+        // lines): answered automatically, and its prompts removed.
+        let paged = capture(&s, "seq 1 100 | more").await.unwrap();
+        let numbers: String = (1..=100).map(|n| format!("{n}\n")).collect();
+        assert_eq!(paged, numbers, "telnet: {telnet}");
+
+        // Nothing printed: explained, and the session keeps working.
+        let empty = capture(&s, "true").await.unwrap_err();
+        assert!(empty.to_string().contains("rien affiché"), "{empty}");
+        s.write("echo STILL-$((40+2))\r").await;
+        s.wait_output("STILL-42", Duration::from_secs(5)).await;
     }
 }
