@@ -2,14 +2,17 @@
 
 Client de terminal desktop personnel (SSH, puis Telnet et série) pour administrer
 serveurs Linux, équipements Cisco/Huawei et laboratoires GNS3 / EVE-NG / PNETLab.
-Cible : Ubuntu. Tout fonctionne en local, sans service cloud.
+Cibles : Ubuntu (principale), Arch Linux et Windows 10/11. Tout fonctionne en local,
+sans service cloud.
 
-**État : phase 8 (packaging) — paquet `.deb` et AppImage pour Ubuntu.** SSH, Telnet et console série, une session
+**État : phases 1 à 8 terminées, portage Arch et Windows en cours de validation.** SSH, Telnet et console série, une session
 par onglet, profils rangés en dossiers, mots de passe dans le trousseau système,
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
 session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
-de fichiers SFTP.
+de fichiers SFTP, copie à la sélection et collage au clic droit. Paquets : `.deb` et
+AppImage (Ubuntu), `PKGBUILD` (Arch), installateurs `.exe` / `.msi` (Windows, construits
+par GitHub Actions).
 
 ## Installation (paquet .deb)
 
@@ -59,6 +62,48 @@ Il nécessite FUSE 2 (`sudo apt install libfuse2t64` s'il manque) ; sinon :
 `./NetForge_0.1.0_amd64.AppImage --appimage-extract-and-run`. Il embarque WebKitGTK
 (~87 Mo, contre ~6 Mo pour le `.deb`) et utilise les mêmes données que le `.deb`.
 Pas d'entrée dans le menu des applications. Le `.deb` reste le format recommandé.
+
+### Arch Linux
+
+Le `PKGBUILD` compile NetForge depuis les sources d'une version publiée (tag `v<version>`
+sur GitHub) et utilise les bibliothèques d'Arch (`webkit2gtk-4.1`, `systemd-libs`, `dbus`) :
+
+```bash
+cd packaging/arch
+makepkg -si            # --nocheck pour sauter les tests (compilation plus courte)
+```
+
+Désinstallation : `sudo pacman -R netforge`. Pour enregistrer les mots de passe, il
+faut un trousseau Secret Service (`gnome-keyring`, ou KWallet sous KDE). L'AppImage
+fonctionne aussi sur Arch.
+
+### Windows 10 / 11
+
+Télécharger `NetForge_<version>_x64-setup.exe` (ou le `.msi`) depuis la page *Releases*
+du dépôt GitHub, puis l'exécuter. WebView2 est déjà présent sur Windows 10/11 à jour ;
+sinon l'installateur le télécharge.
+
+Différences avec Linux :
+- mots de passe dans le **Gestionnaire d'identifiants** Windows ;
+- agent SSH : le service « OpenSSH Authentication Agent » (`ssh-add` de Windows), à
+  défaut Pageant (PuTTY) ;
+- ports série `COM3`, `COM4`… (Gestionnaire de périphériques → Ports (COM et LPT)) ;
+- données dans `%APPDATA%\dev.kamis.netforge\`.
+
+### Construire les installateurs (GitHub Actions)
+
+- `.github/workflows/ci.yml` : à chaque push, typecheck, lint et tests du frontend,
+  `cargo fmt`, `clippy` et tests Rust sur Ubuntu **et** Windows.
+- `.github/workflows/release.yml` : pour un tag `v*`, construit `.deb` + AppImage
+  (Ubuntu 24.04) et `.exe` + `.msi` (Windows), et les joint à une *release* en
+  brouillon, à vérifier puis publier à la main :
+
+  ```bash
+  git tag v0.2.0 && git push origin v0.2.0
+  ```
+
+  Lancé à la main (onglet *Actions* → *Release* → *Run workflow*), il dépose les
+  installateurs comme artefacts de l'exécution, sans créer de release.
 
 ## Compiler depuis les sources
 
@@ -110,12 +155,19 @@ mots de passe ni contenu des sessions.
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+PageDown` / `Ctrl+PageUp` | onglet suivant / précédent |
 | `Ctrl+Shift+F` | rechercher dans l'historique (Entrée / Maj+Entrée, Échap pour fermer) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | copier / coller |
+| sélection à la souris / clic droit / `Ctrl+V` | copier / coller (désactivables dans Réglages → Presse-papiers) |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | agrandir / réduire / taille normale du texte (non enregistré) |
 | `Ctrl+Shift+B` | afficher / masquer les profils |
 | `Ctrl+,` | réglages |
 
 Ces raccourcis ne sont jamais envoyés au terminal distant ; `Ctrl+C`, `Ctrl+D`,
-`Ctrl+Z`, `Ctrl+R`, `Ctrl+W`… restent au shell.
+`Ctrl+Z`, `Ctrl+R`, `Ctrl+W`… restent au shell. Les raccourcis d'onglet, de recherche
+et de zoom agissent sur la session active : sans session ouverte, ils sont sans effet.
+
+**Presse-papiers** (Réglages, tout activé par défaut) : le texte sélectionné à la souris
+est copié aussitôt, le clic droit colle, `Ctrl+V` colle. Désactiver `Ctrl+V` pour
+envoyer `^V` au terminal distant (bloc visuel dans vim). Un collage de plusieurs
+lignes demande toujours confirmation.
 
 **Glisser-déposer** : glisser un onglet pour changer l'ordre des sessions ; glisser un
 profil ou un dossier sur un dossier pour l'y ranger (ou dans l'espace vide de la liste
@@ -206,7 +258,8 @@ débrancher l'adaptateur est détecté comme une connexion perdue.
 
 ## Données
 
-Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) :
+Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) sous Linux,
+`%APPDATA%\dev.kamis.netforge\` sous Windows :
 
 | Fichier | Contenu |
 |---|---|
@@ -295,11 +348,14 @@ src-tauri/src/
   persistence/            SQLite : migrations, profils, dossiers, réglages
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
+  platform.rs             différences Linux / Windows (droits des fichiers, ports série)
 src-tauri/migrations/     migrations SQL versionnées
 src-tauri/linux/          modèle du fichier .desktop (menu des applications)
 src-tauri/icons/          icônes générées (npx tauri icon assets/netforge-icon.svg)
 assets/netforge-icon.svg  icône source
 scripts/                  serveur SSH de test
+packaging/arch/           PKGBUILD et fichier .desktop pour Arch Linux
+.github/workflows/        CI (Ubuntu + Windows) et construction des installateurs
 ```
 
 ## Sécurité
@@ -314,3 +370,6 @@ scripts/                  serveur SSH de test
 - Mots de passe et passphrases jamais journalisés, effacés de la mémoire côté Rust
   après usage (`zeroize`).
 - Capabilities Tauri limitées aux commandes de NetForge ; CSP stricte en production.
+- L'accès au presse-papiers est activé pour la page (nécessaire au collage sous
+  WebKitGTK) : acceptable car elle n'exécute que le code de NetForge (CSP stricte,
+  aucun contenu distant).

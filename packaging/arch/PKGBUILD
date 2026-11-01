@@ -1,0 +1,50 @@
+# Maintainer: djonzoumbek <guepelbekamis@gmail.com>
+#
+# Builds NetForge from the sources of a tagged release:
+#   makepkg -si
+pkgname=netforge
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Client SSH, Telnet, série et SFTP pour l'administration réseau"
+arch=('x86_64')
+url="https://github.com/djonzoumbek/Net-Forge"
+license=('LicenseRef-NetForge')
+# webkit2gtk-4.1: the window and the interface; systemd-libs: libudev (serial
+# port names); dbus: system keyring (Secret Service).
+depends=('webkit2gtk-4.1' 'gtk3' 'systemd-libs' 'dbus' 'glibc' 'gcc-libs' 'hicolor-icon-theme')
+makedepends=('rust' 'nodejs' 'npm' 'git')
+optdepends=('gnome-keyring: enregistrer les mots de passe (ou KWallet sous KDE)'
+            'openssh: agent SSH (ssh-agent, ssh-add)')
+# makepkg's LTO flags target C code and break some Rust build scripts; the
+# release profile already enables Rust's own LTO.
+options=('!lto')
+source=("Net-Forge::git+https://github.com/djonzoumbek/Net-Forge.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+prepare() {
+  cd Net-Forge
+  npm ci --no-audit --no-fund
+  cargo fetch --locked --manifest-path src-tauri/Cargo.toml --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd Net-Forge
+  # `tauri build` (not plain cargo) embeds the compiled interface in the binary.
+  npm run tauri build -- --no-bundle
+}
+
+check() {
+  cd Net-Forge/src-tauri
+  cargo test --release --locked
+}
+
+package() {
+  cd Net-Forge
+  install -Dm755 src-tauri/target/release/netforge "$pkgdir/usr/bin/netforge"
+  install -Dm644 packaging/arch/netforge.desktop "$pkgdir/usr/share/applications/netforge.desktop"
+  for size in 32 64 128; do
+    install -Dm644 "src-tauri/icons/${size}x${size}.png" \
+      "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/netforge.png"
+  done
+  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/netforge.png"
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=NetForge
+Comment=Client SSH, Telnet, série et SFTP pour l'administration réseau
+Exec=netforge
+Icon=netforge
+StartupWMClass=netforge
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;telnet;sftp;serial;console;cisco;huawei;terminal;
