@@ -23,6 +23,8 @@ interface ProfileEditorProps {
   profile?: Profile;
   defaultFolderId: number | null;
   tree: Tree;
+  /** Every profile: the SSH ones can be chosen as jump host. */
+  profiles: Profile[];
   onSave: (input: ProfileInput) => Promise<void>;
   onCancel: () => void;
 }
@@ -31,7 +33,7 @@ interface ProfileEditorProps {
 type SavedSecretAction = "keep" | "replace" | "clear";
 type SshAuthMethod = Exclude<AuthMethod, "none">;
 
-export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel }: ProfileEditorProps) {
+export function ProfileEditor({ profile, defaultFolderId, tree, profiles, onSave, onCancel }: ProfileEditorProps) {
   const [name, setName] = useState(profile?.name ?? "");
   const [folderId, setFolderId] = useState<number | null>(profile?.folderId ?? defaultFolderId);
   const [protocol, setProtocol] = useState<Protocol>(profile?.protocol ?? "ssh");
@@ -53,6 +55,7 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
   const [loginCommands, setLoginCommands] = useState(profile?.loginCommands ?? "");
   const [sessionLog, setSessionLog] = useState<LogMode>(profile?.sessionLog ?? "off");
   const [portForwards, setPortForwards] = useState<ForwardSpec[]>(profile?.portForwards ?? []);
+  const [jumpProfileId, setJumpProfileId] = useState<number | null>(profile?.jumpProfileId ?? null);
   const [saveSecret, setSaveSecret] = useState(false);
   const [savedAction, setSavedAction] = useState<SavedSecretAction>("keep");
   const [secret, setSecret] = useState("");
@@ -117,12 +120,18 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
         sessionLog,
         serial,
         portForwards: ssh ? portForwards : [],
+        jumpProfileId: ssh ? jumpProfileId : null,
       });
     } catch (e) {
       setError(toAppError(e).message);
       setSaving(false);
     }
   }
+
+  // Loops and chains too long are refused by the backend when saving.
+  const jumpCandidates = profiles.filter((p) => p.protocol === "ssh" && p.id !== profile?.id);
+  const jumpProfile = jumpCandidates.find((p) => p.id === jumpProfileId);
+  const jumpNeedsPassword = jumpProfile?.authMethod === "password" && !jumpProfile.hasSavedSecret;
 
   const showSecretInput =
     ssh && authMethod !== "agent" && (hasSaved ? savedAction === "replace" : saveSecret);
@@ -185,6 +194,32 @@ export function ProfileEditor({ profile, defaultFolderId, tree, onSave, onCancel
               <input value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
             </label>
           </div>
+        )}
+
+        {ssh && jumpCandidates.length > 0 && (
+          <>
+            <label className="field">
+              <span>Hôte de rebond (bastion)</span>
+              <select
+                value={jumpProfileId ?? ""}
+                onChange={(e) => setJumpProfileId(e.target.value === "" ? null : Number(e.target.value))}
+              >
+                <option value="">Aucun : connexion directe</option>
+                {jumpCandidates.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.username}@{p.host}:{p.port})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {jumpProfile && (
+              <p className={`hint ${jumpNeedsPassword ? "warning-text" : ""}`}>
+                {jumpNeedsPassword
+                  ? `« ${jumpProfile.name} » n'a pas de mot de passe enregistré : enregistre-le dans ce profil (ou utilise une clé / l'agent SSH), sinon la connexion échouera.`
+                  : `Connexion à travers « ${jumpProfile.name} », comme ssh -J : l'hôte et le port ci-dessus sont ceux vus depuis le rebond (ex. une adresse privée du labo). Chaque clé d'hôte est vérifiée.`}
+              </p>
+            )}
+          </>
         )}
 
         {ssh && (

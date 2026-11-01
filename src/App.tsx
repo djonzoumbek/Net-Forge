@@ -418,6 +418,7 @@ function App() {
             profile={dialog.profile}
             defaultFolderId={dialog.folderId}
             tree={tree}
+            profiles={library.profiles}
             onSave={(input) => saveProfile(input, dialog.profile)}
             onCancel={close}
           />

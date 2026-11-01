@@ -73,6 +73,8 @@ export interface ConnectionInfo {
   protocol: string;
   encrypted: boolean;
   algorithms: NegotiatedAlgorithms | null;
+  /** SSH: jump hosts crossed, from the first contacted to the last. */
+  via: string[];
 }
 
 export type SessionEvent =

@@ -51,6 +51,8 @@ export interface Profile extends SessionOptions {
   serial: SerialSettings;
   /** SSH port forwards started at connection. */
   portForwards: ForwardSpec[];
+  /** SSH profile used as jump host (ssh -J). */
+  jumpProfileId: number | null;
 }
 
 /** How a session of the profile behaves once connected. */
@@ -92,6 +94,7 @@ export interface ProfileInput extends SessionOptions {
   secret: SecretChange;
   serial: SerialSettings;
   portForwards: ForwardSpec[];
+  jumpProfileId: number | null;
 }
 
 export interface CommandButton {

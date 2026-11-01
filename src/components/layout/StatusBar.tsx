@@ -50,6 +50,11 @@ function SecurityBadges({ info }: { info: ConnectionInfo }) {
           Non chiffré
         </span>
       )}
+      {info.via.length > 0 && (
+        <span className="badge neutral" title={`Par rebond : ${[...info.via, "cible"].join(" → ")}`}>
+          via {info.via[info.via.length - 1].split("@").pop()}
+        </span>
+      )}
       {algorithms && algorithms.legacy.length > 0 && (
         <span
           className="badge legacy"

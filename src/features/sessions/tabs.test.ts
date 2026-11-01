@@ -22,7 +22,7 @@ function openTabs(...labels: string[]): TabsState {
 
 const connected: SessionEvent = {
   type: "connected",
-  info: { protocol: "ssh", encrypted: true, algorithms: null },
+  info: { protocol: "ssh", encrypted: true, algorithms: null, via: [] },
   logFile: null,
   logError: null,
 };

@@ -11,6 +11,7 @@ const profile = (id: number, folderId: number | null): Profile => ({
   port: 22,
   username: "u",
   portForwards: [],
+  jumpProfileId: null,
   authMethod: "password",
   keyPath: null,
   hasSavedSecret: false,
