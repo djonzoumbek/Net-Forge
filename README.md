@@ -10,7 +10,7 @@ par onglet, profils rangés en dossiers, mots de passe dans le trousseau systèm
 `known_hosts`, mode compatibilité pour équipements anciens, keepalive et reconnexion
 automatique, barre de commandes, envoi multi-sessions, gestion du pager, journal de
 session, recherche dans l'historique, thèmes, polices, raccourcis clavier, transfert
-de fichiers SFTP, copie à la sélection et collage au clic droit. Paquets : `.deb` et
+de fichiers SFTP, redirections de port (tunnels -L et SOCKS), copie à la sélection et collage au clic droit. Paquets : `.deb` et
 AppImage (Ubuntu), `PKGBUILD` (Arch), installateurs `.exe` / `.msi` (Windows, construits
 par GitHub Actions).
 
@@ -238,6 +238,37 @@ Bouton **Fichiers** d'un onglet SSH connecté : un panneau s'ouvre sous le termi
 - Les dossiers entiers ne sont pas transférés (fichier par fichier). Beaucoup
   d'équipements réseau n'ont pas SFTP (seulement SCP) : un message le signale.
 
+## Redirections de port (tunnels SSH)
+
+Comme `ssh -L` et `ssh -D`, sur la connexion de la session (aucune nouvelle
+authentification) :
+
+- **Local (-L)** : un port de cette machine mène à une destination *vue depuis le
+  serveur SSH*. Exemple : profil « bastion du labo », `8443 → 192.168.10.1:443`, puis
+  `https://localhost:8443` dans le navigateur ouvre l'interface web du routeur.
+- **SOCKS (-D)** : un proxy SOCKS5 (port 1080 par défaut). Configurer le navigateur sur
+  `127.0.0.1:1080` avec la résolution DNS distante (`socks5h://` pour curl, « Proxy DNS
+  via SOCKS v5 » dans Firefox) : tout le trafic web passe par le serveur.
+
+Deux façons de les créer :
+- dans le profil (section **Redirections de port**, SSH uniquement) : démarrées à
+  chaque connexion, y compris après une reconnexion ;
+- pendant la session : bouton **Tunnels** de la barre d'état, puis « Démarrer ».
+
+Le panneau **Tunnels** liste les redirections actives avec l'adresse à utiliser, les
+connexions en cours / depuis le démarrage, la dernière erreur (destination
+injoignable, redirections interdites par le serveur — `AllowTcpForwarding no`, fréquent
+sur les routeurs) et un bouton « Arrêter ». Si une redirection du profil ne démarre pas
+(port déjà utilisé…), le bouton devient « ⚠ Tunnels » et le panneau affiche l'erreur.
+
+Sécurité : l'écoute se fait sur `127.0.0.1` par défaut (cette machine seulement).
+« Accessible depuis le réseau local » écoute sur `0.0.0.0` : n'importe quelle machine du
+réseau peut alors utiliser le tunnel sans authentification, comme `ssh -g`. Comme avec
+OpenSSH, le proxy SOCKS n'a pas de mot de passe : tout programme local peut s'en servir.
+Fermer la session arrête ses redirections et libère les ports.
+
+Non géré : la redirection distante (`ssh -R`).
+
 ## Console série
 
 Protocole **Série** dans la connexion rapide ou un profil : port (ports détectés
@@ -265,6 +296,8 @@ Dans `~/.local/share/dev.kamis.netforge/` (droits `0700`) sous Linux,
 |---|---|
 | `netforge.db` (+ `-wal`, `-shm`) | profils et dossiers (SQLite). **Aucun secret** : seulement le nom de l'entrée du trousseau |
 | `known_hosts` | clés d'hôte acceptées dans NetForge (format OpenSSH, `0600`) |
+
+Les redirections de port d'un profil sont dans la table `port_forwards` (migration 0007).
 
 Journaux de session (si activés) : `~/Documents/NetForge/logs/` par défaut.
 
@@ -345,6 +378,7 @@ src-tauri/src/
                           telnet/ (négociation RFC 854/1073/1091), net.rs (TCP),
                           serial/ (tokio-serial, diagnostic du groupe dialout)
   transfers/              SFTP : listing, envoi/réception, progression, annulation
+  forwarding/             redirections de port -L / -D (écoute locale, SOCKS5, relais)
   persistence/            SQLite : migrations, profils, dossiers, réglages
   security/               trousseau (secrets), known_hosts
   errors/                 type d'erreur central { code, message }
